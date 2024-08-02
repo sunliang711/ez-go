@@ -5,4 +5,7 @@ use (
 	./ezgrpc
 	./ezhttp
 	./ezrmq
+	./ezcfg
+	./ezcamunda
+	./ezlog
 )
