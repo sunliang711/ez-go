@@ -1,6 +1,6 @@
 module producer
 
-go 1.22.1
+go 1.21.1
 
 require github.com/sunliang711/ez-go/ezrmq v0.0.0-20240802023822-a15552741cfb
 
