@@ -1,0 +1,6 @@
+github.com/rabbitmq/amqp091-go v1.10.0 h1:STpn5XsHlHGcecLmMFCtg7mqq0RnD+zFr4uzukfVhBw=
+github.com/rabbitmq/amqp091-go v1.10.0/go.mod h1:Hy4jKW5kQART1u+JkDTF9YYOQUHXqMuhrgxOEeS7G4o=
+github.com/sunliang711/ez-go/ezrmq v0.0.0-20240802023822-a15552741cfb h1:V6ovBccF0E4p99kCOa/gNZbCvcw77K/72Jf4X3iGTWg=
+github.com/sunliang711/ez-go/ezrmq v0.0.0-20240802023822-a15552741cfb/go.mod h1:5yaiNLZgepRGdPwRmIb+28U7iCmT60nXZGCIh0hUYRE=
+go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
+go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
