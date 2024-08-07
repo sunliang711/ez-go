@@ -264,7 +264,7 @@ func (r *RabbitMQ) consume(ctx context.Context, exchangeName string, consumerCon
 		defer func() {
 			defer r.wg.Done()
 			defer close(out)
-			r.logger.Printf("Consume from queue: %s done", queue.Name)
+			r.logger.Printf("Consume from queue: %s exit", queue.Name)
 		}()
 
 		r.logger.Printf("Receive messages from queue: %s", queue.Name)
@@ -272,10 +272,12 @@ func (r *RabbitMQ) consume(ctx context.Context, exchangeName string, consumerCon
 			select {
 			case msg, ok := <-msgs:
 				if !ok {
+					r.logger.Printf("Channel closed,exit")
 					return
 				}
 				out <- msg
 			case <-ctx.Done():
+				r.logger.Printf("Context done,exit")
 				return
 			}
 		}
@@ -286,6 +288,7 @@ func (r *RabbitMQ) consume(ctx context.Context, exchangeName string, consumerCon
 func (r *RabbitMQ) Close() {
 	r.logger.Println("Closing RabbitMQ connection...")
 	r.cancelFunc()
+	r.logger.Println("Waiting for all consumers to stop...")
 	r.wg.Wait()
 	r.logger.Println("All consumers stopped")
 	if err := r.ch.Close(); err != nil {
