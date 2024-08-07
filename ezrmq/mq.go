@@ -145,7 +145,7 @@ func (r *RabbitMQ) Connect() error {
 	// 遍历consume exchange, 声明queue并绑定exchange
 	for exchangeName, consumers := range r.config.Consumers {
 		for _, consumer := range consumers {
-			ch, err := r.consume(r.ctx, exchangeName, &consumer)
+			ch, err := r.consume(exchangeName, &consumer)
 			if err != nil {
 				return err
 			}
@@ -193,7 +193,7 @@ func (r *RabbitMQ) Publish(exchange, routingKey string, body []byte) error {
 	)
 }
 
-func (r *RabbitMQ) consume(ctx context.Context, exchangeName string, consumerConfig *ConsumerConfig) (<-chan amqp.Delivery, error) {
+func (r *RabbitMQ) consume(exchangeName string, consumerConfig *ConsumerConfig) (<-chan amqp.Delivery, error) {
 	r.consumeMux.Lock()
 	defer r.consumeMux.Unlock()
 
@@ -276,7 +276,7 @@ func (r *RabbitMQ) consume(ctx context.Context, exchangeName string, consumerCon
 					return
 				}
 				out <- msg
-			case <-ctx.Done():
+			case <-r.ctx.Done():
 				r.logger.Printf("Context done,exit")
 				return
 			}
