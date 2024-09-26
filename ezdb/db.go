@@ -1,12 +1,9 @@
 package ezdb
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
-	"strings"
-	"time"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
@@ -21,10 +18,25 @@ type Database struct {
 	logger  *log.Logger
 }
 
+const (
+	DB_MYSQL    = "mysql"
+	DB_SQLITE   = "sqlite"
+	DB_POSTGRES = "postgres"
+)
+
+type DBLogLevel int
+
+const (
+	DBLOG_SILENT DBLogLevel = iota
+	DBLOG_ERROR
+	DBLOG_WARN
+	DBLOG_INFO
+)
+
 var opens = map[string]func(string) gorm.Dialector{
-	"mysql":    mysql.Open,
-	"sqlite":   sqlite.Open,
-	"postgres": postgres.Open,
+	DB_MYSQL:    mysql.Open,
+	DB_SQLITE:   sqlite.Open,
+	DB_POSTGRES: postgres.Open,
 }
 
 type DatabaseConfig struct {
@@ -32,10 +44,21 @@ type DatabaseConfig struct {
 	Dsn    string
 	Driver string
 	Tables []Table
-	Log    bool
+	Log    DBLogLevel
 }
 
-func NewDatabase(configs []DatabaseConfig) *Database {
+func (cfg *DatabaseConfig) Check() error {
+	switch cfg.Driver {
+	case DB_MYSQL:
+	case DB_SQLITE:
+	case DB_POSTGRES:
+	default:
+		return fmt.Errorf("check database config with driver: %s error: %w", cfg.Driver, ErrInvalidDBDriver)
+	}
+	return nil
+}
+
+func NewDatabase(configs []DatabaseConfig, init bool) (*Database, error) {
 	db := &Database{
 		dbs:     make(map[string]*gorm.DB),
 		configs: make(map[string]DatabaseConfig),
@@ -43,15 +66,25 @@ func NewDatabase(configs []DatabaseConfig) *Database {
 	}
 
 	for _, config := range configs {
+		err := config.Check()
+		if err != nil {
+			return nil, err
+		}
 		db.AddDatabase(config)
 	}
 
-	return db
+	if init {
+		err := db.Init()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return db, nil
 }
 
 // AddDatabase 增加数据库配置
 func (db *Database) AddDatabase(config DatabaseConfig) {
-	// db.configs = append(db.configs, config)
 	db.configs[config.Name] = config
 }
 
@@ -61,25 +94,22 @@ func (db *Database) Init() error {
 		return fmt.Errorf("no database config")
 	}
 
-	var newLogger glogger.Interface
-	newLogger = CustomLogger{
-		glogger.New(
-			log.New(os.Stdout, "\r\n", log.LstdFlags),
-			glogger.Config{
-				SlowThreshold:             time.Second,
-				LogLevel:                  glogger.Info,
-				IgnoreRecordNotFoundError: true,
-				Colorful:                  false,
-			},
-		),
-	}
-
 	for _, config := range db.configs {
 		db.logger.Printf("open database: %s", config.Name)
 
 		var logger glogger.Interface
-		if config.Log {
-			logger = newLogger
+		switch config.Log {
+		case DBLOG_SILENT:
+			logger = glogger.Default.LogMode(glogger.Silent)
+		case DBLOG_ERROR:
+			logger = glogger.Default.LogMode(glogger.Error)
+		case DBLOG_WARN:
+			logger = glogger.Default.LogMode(glogger.Warn)
+		case DBLOG_INFO:
+			logger = glogger.Default.LogMode(glogger.Info)
+
+		default:
+			return ErrInvalidDBLogLevel
 		}
 		conn, err := gorm.Open(opens[config.Driver](config.Dsn), &gorm.Config{Logger: logger})
 		if err != nil {
@@ -101,44 +131,26 @@ func (db *Database) Init() error {
 }
 
 // GetDatabase 获取数据库连接
-func (db *Database) GetDatabase(name string) *gorm.DB {
+func (db *Database) GetDB(name string) *gorm.DB {
 	return db.dbs[name]
 }
 
 type Table struct {
 	Name       string
-	Definition any
+	Definition any // model
 }
 
-type CustomLogger struct {
-	glogger.Interface
-}
-
-func (c CustomLogger) Info(ctx context.Context, msg string, data ...interface{}) {
-	log.Printf("[INFO] "+msg, data...)
-}
-
-func (c CustomLogger) Warn(ctx context.Context, msg string, data ...interface{}) {
-	log.Printf("[WARN] "+msg, data...)
-}
-
-func (c CustomLogger) Error(ctx context.Context, msg string, data ...interface{}) {
-	log.Printf("[ERROR] "+msg, data...)
-}
-
-func (c CustomLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
-	elapsed := time.Since(begin)
-	sql, rows := fc()
-
-	// 对于复杂的查询参数，你可能需要进一步处理
-	// 这里假设所有参数都是简单的字符串、数字等
-	for _, param := range glogger.ExplainSQL(sql, nil, "") {
-		sql = strings.Replace(sql, "?", fmt.Sprintf("'%v'", param), 1)
+func (db *Database) Close() error {
+	for name, conn := range db.dbs {
+		db.logger.Printf("close database: %s", name)
+		sqlDB, err := conn.DB()
+		if err != nil {
+			return err
+		}
+		err = sqlDB.Close()
+		if err != nil {
+			return err
+		}
 	}
-
-	if err != nil {
-		log.Printf("[rows:%v] SQL: %s |  Elapsed: %v | Error: %v", rows, sql, elapsed, err)
-	} else {
-		log.Printf("[rows:%v] SQL: %s |  Elapsed: %v ", rows, sql, elapsed)
-	}
+	return nil
 }
