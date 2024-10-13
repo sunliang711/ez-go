@@ -16,7 +16,7 @@ func main() {
 		Dsn:    "root:root@tcp(10.1.9.120:3306)/go_admin2?charset=utf8&parseTime=True&loc=Local&timeout=1000ms",
 		Driver: "mysql",
 		Tables: []ezdb.Table{{Name: "users", Definition: &User{}}},
-		Log:    ezdb.DBLOG_SILENT,
+		Log:    "silent",
 	}}
 	db, err := ezdb.NewDatabase(configs, true)
 	if err != nil {
@@ -26,7 +26,7 @@ func main() {
 
 	defer db.Close()
 
-	err = db.GetDB("mysql").Create(&User{Name: "sunliang"}).Error
+	err = db.GetDB("mysql").Create(&User{Name: "sunliang22"}).Error
 	if err != nil {
 		panic(err)
 	}

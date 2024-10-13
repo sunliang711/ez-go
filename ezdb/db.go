@@ -24,13 +24,11 @@ const (
 	DB_POSTGRES = "postgres"
 )
 
-type DBLogLevel int
-
 const (
-	DBLOG_SILENT DBLogLevel = iota
-	DBLOG_ERROR
-	DBLOG_WARN
-	DBLOG_INFO
+	DBLOG_SILENT = "silent"
+	DBLOG_INFO   = "info"
+	DBLOG_ERROR  = "error"
+	DBLOG_WARN   = "warn"
 )
 
 var opens = map[string]func(string) gorm.Dialector{
@@ -44,7 +42,7 @@ type DatabaseConfig struct {
 	Dsn    string
 	Driver string
 	Tables []Table
-	Log    DBLogLevel
+	Log    string // silent, info, warn, error
 }
 
 func (cfg *DatabaseConfig) Check() error {
@@ -109,7 +107,7 @@ func (db *Database) Init() error {
 			logger = glogger.Default.LogMode(glogger.Info)
 
 		default:
-			return ErrInvalidDBLogLevel
+			logger = glogger.Default.LogMode(glogger.Silent)
 		}
 		conn, err := gorm.Open(opens[config.Driver](config.Dsn), &gorm.Config{Logger: logger})
 		if err != nil {
