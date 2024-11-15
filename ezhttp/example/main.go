@@ -15,6 +15,7 @@ func main() {
 	httpServer.AddMiddlewares(nil)
 	httpServer.AddHealthHandler()
 
+	assetManager := &AssetManager{}
 	err := httpServer.AddRoutes([]server.Routes{
 		{
 			GroupPath:        "/blockchain",
@@ -26,6 +27,13 @@ func main() {
 					Path:        "/list",
 					Middlewares: []gin.HandlerFunc{},
 					Handler:     ListBlockchain,
+				},
+				{
+					Name:        "listAsset",
+					Method:      "GET",
+					Path:        "/listAsset",
+					Middlewares: []gin.HandlerFunc{},
+					Handler:     assetManager.ListAssets,
 				},
 			},
 		},
@@ -68,4 +76,10 @@ func ListBlockchain(c *gin.Context) {
 type Blockchain struct {
 	BlockchainName string `json:"blockchain_name"`
 	ID             int    `json:"id"`
+}
+
+type AssetManager struct{}
+
+func (a *AssetManager) ListAssets(c *gin.Context) {
+	c.JSON(0, []string{"BTC", "ETH"})
 }

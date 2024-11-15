@@ -5,6 +5,8 @@ import (
 	"net"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 type Service struct {
@@ -19,7 +21,7 @@ type Server struct {
 	// opts   []grpc.ServerOption
 }
 
-func (d *Server) Init(opts ...Option) {
+func (d *Server) init(opts ...Option) {
 	for _, o := range opts {
 		o(&d.options)
 	}
@@ -27,12 +29,13 @@ func (d *Server) Init(opts ...Option) {
 
 func New(opts ...Option) *Server {
 	options := Options{
-		host: "",
-		port: 9090,
+		host:   "",
+		port:   9090,
+		health: false,
 	}
 
 	srv := &Server{options: options}
-	srv.Init(opts...)
+	srv.init(opts...)
 
 	return srv
 }
@@ -44,11 +47,16 @@ func (srv *Server) Start(services []Service, opts ...grpc.ServerOption) error {
 	}
 
 	server := grpc.NewServer(opts...)
+
+	if srv.options.health {
+		server.RegisterService(&healthgrpc.Health_ServiceDesc, health.NewServer())
+	}
 	for i := range services {
 		server.RegisterService(services[i].Desc, services[i].Ss)
 	}
 
 	srv.server = server
+	fmt.Printf("grpc server started at %s:%d\n", srv.options.host, srv.options.port)
 	err = server.Serve(lis)
 	if err != nil {
 		return err
