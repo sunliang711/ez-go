@@ -2,7 +2,9 @@ package ezgrpc
 
 import (
 	"fmt"
+	"log"
 	"net"
+	"os"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -16,6 +18,8 @@ type Service struct {
 
 type Server struct {
 	options Options
+
+	logger *log.Logger
 
 	server *grpc.Server
 	// opts   []grpc.ServerOption
@@ -34,7 +38,7 @@ func New(opts ...Option) *Server {
 		health: false,
 	}
 
-	srv := &Server{options: options}
+	srv := &Server{options: options, logger: log.New(os.Stdout, "|GRPC_SERVER| ", log.LstdFlags)}
 	srv.init(opts...)
 
 	return srv
@@ -56,11 +60,18 @@ func (srv *Server) Start(services []Service, opts ...grpc.ServerOption) error {
 	}
 
 	srv.server = server
-	fmt.Printf("grpc server started at %s:%d\n", srv.options.host, srv.options.port)
-	err = server.Serve(lis)
-	if err != nil {
-		return err
-	}
+	srv.logger.Printf("grpc server started at %s:%d\n", srv.options.host, srv.options.port)
+
+	// err = server.Serve(lis)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	go func() {
+		err = server.Serve(lis)
+		if err != nil {
+			panic(err)
+		}
+	}()
 
 	return nil
 

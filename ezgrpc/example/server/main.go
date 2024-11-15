@@ -15,7 +15,7 @@ func main() {
 		Desc: &ledger_manager_service.LedgerManagerService_ServiceDesc,
 		Ss:   &srv,
 	}}
-	go grpcServer.Start(services)
+	grpcServer.Start(services)
 
 	eztools.WaitForSignal(nil)
 
