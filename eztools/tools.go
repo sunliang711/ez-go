@@ -2,6 +2,8 @@ package eztools
 
 import (
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,4 +22,18 @@ func WaitForSignal(handler SignalHandler) {
 	if handler != nil {
 		handler()
 	}
+}
+
+func ServeTLS(srv *http.Server, listen net.Listener, certFile, keyFile string) error {
+	if certFile == "" || keyFile == "" {
+		return srv.Serve(listen)
+	}
+	return srv.ServeTLS(listen, certFile, keyFile)
+}
+
+func ListenAndServeTLS(srv *http.Server, certFile, keyFile string) error {
+	if certFile == "" || keyFile == "" {
+		return srv.ListenAndServe()
+	}
+	return srv.ListenAndServeTLS(certFile, keyFile)
 }
