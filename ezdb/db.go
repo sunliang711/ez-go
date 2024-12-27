@@ -14,7 +14,7 @@ import (
 
 type Database struct {
 	dbs     map[string]*gorm.DB
-	configs map[string]DatabaseConfig
+	configs map[string]*DatabaseConfig
 	logger  *log.Logger
 }
 
@@ -56,10 +56,10 @@ func (cfg *DatabaseConfig) Check() error {
 	return nil
 }
 
-func NewDatabase(configs []DatabaseConfig, init bool) (*Database, error) {
+func NewDatabase(configs []*DatabaseConfig, init bool) (*Database, error) {
 	db := &Database{
 		dbs:     make(map[string]*gorm.DB),
-		configs: make(map[string]DatabaseConfig),
+		configs: make(map[string]*DatabaseConfig),
 		logger:  log.New(os.Stdout, "|Database| ", log.LstdFlags),
 	}
 
@@ -82,7 +82,7 @@ func NewDatabase(configs []DatabaseConfig, init bool) (*Database, error) {
 }
 
 // AddDatabase 增加数据库配置
-func (db *Database) AddDatabase(config DatabaseConfig) {
+func (db *Database) AddDatabase(config *DatabaseConfig) {
 	db.configs[config.Name] = config
 }
 

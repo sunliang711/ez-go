@@ -164,81 +164,81 @@ func (r *RabbitMQ) setupChannel() error {
 		return err
 	}
 
-	// 监听channel关闭
-	go func() {
-		// 注意这里要先获取channel的引用，因为重连时r.ch会变化
-		ch := r.ch
-		chClose := ch.NotifyClose(make(chan *amqp.Error))
-		select {
-		case err := <-chClose:
-			r.logger.Printf("Channel closed: %v", err)
-			// 重新设置channel
-			r.reconnectChannel()
-		case <-r.ctx.Done():
-			return
-		}
-	}()
+	// // 监听channel关闭
+	// go func() {
+	// 	// 注意这里要先获取channel的引用，因为重连时r.ch会变化
+	// 	ch := r.ch
+	// 	chClose := ch.NotifyClose(make(chan *amqp.Error))
+	// 	select {
+	// 	case err := <-chClose:
+	// 		r.logger.Printf("Channel closed: %v", err)
+	// 		// 重新设置channel
+	// 		r.reconnectChannel()
+	// 	case <-r.ctx.Done():
+	// 		return
+	// 	}
+	// }()
 
 	return nil
 }
 
-// 新增channel重连方法
-func (r *RabbitMQ) reconnectChannel() {
-	r.reconnectMux.Lock()
-	defer r.reconnectMux.Unlock()
+// // 新增channel重连方法
+// func (r *RabbitMQ) reconnectChannel() {
+// 	r.reconnectMux.Lock()
+// 	defer r.reconnectMux.Unlock()
 
-	for {
-		r.logger.Println("Attempting to reconnect channel...")
+// 	for {
+// 		r.logger.Println("Attempting to reconnect channel...")
 
-		// 检查connection是否正常，如果connection断开，会触发connection的重连
-		if r.conn.IsClosed() {
-			r.logger.Println("Connection is closed, waiting for connection recovery...")
-			time.Sleep(time.Duration(r.config.ReconnectSec) * time.Second)
-			continue
-		}
+// 		// 检查connection是否正常，如果connection断开，会触发connection的重连
+// 		if r.conn.IsClosed() {
+// 			r.logger.Println("Connection is closed, waiting for connection recovery...")
+// 			time.Sleep(time.Duration(r.config.ReconnectSec) * time.Second)
+// 			continue
+// 		}
 
-		// 重新设置channel
-		if err := r.setupChannel(); err != nil {
-			r.logger.Printf("Failed to recreate channel: %s. Retrying in %d seconds...", err, r.config.ReconnectSec)
-			time.Sleep(time.Duration(r.config.ReconnectSec) * time.Second)
-			continue
-		}
+// 		// 重新设置channel
+// 		if err := r.setupChannel(); err != nil {
+// 			r.logger.Printf("Failed to recreate channel: %s. Retrying in %d seconds...", err, r.config.ReconnectSec)
+// 			time.Sleep(time.Duration(r.config.ReconnectSec) * time.Second)
+// 			continue
+// 		}
 
-		// 重新声明exchanges
-		for exchangeName, producer := range r.config.Producers {
-			err := r.ch.ExchangeDeclare(
-				exchangeName,
-				producer.ExchangeOptions.Type,
-				producer.ExchangeOptions.Durable,
-				producer.ExchangeOptions.AutoDel,
-				producer.ExchangeOptions.Internal,
-				producer.ExchangeOptions.NoWait,
-				producer.ExchangeOptions.Arguments,
-			)
-			if err != nil {
-				r.logger.Printf("Failed to declare exchange: %s. Retrying...", err)
-				time.Sleep(time.Duration(r.config.ReconnectSec) * time.Second)
-				continue
-			}
-		}
+// 		// 重新声明exchanges
+// 		for exchangeName, producer := range r.config.Producers {
+// 			err := r.ch.ExchangeDeclare(
+// 				exchangeName,
+// 				producer.ExchangeOptions.Type,
+// 				producer.ExchangeOptions.Durable,
+// 				producer.ExchangeOptions.AutoDel,
+// 				producer.ExchangeOptions.Internal,
+// 				producer.ExchangeOptions.NoWait,
+// 				producer.ExchangeOptions.Arguments,
+// 			)
+// 			if err != nil {
+// 				r.logger.Printf("Failed to declare exchange: %s. Retrying...", err)
+// 				time.Sleep(time.Duration(r.config.ReconnectSec) * time.Second)
+// 				continue
+// 			}
+// 		}
 
-		// 重新设置consumers
-		for exchangeName, consumers := range r.config.Consumers {
-			for _, consumer := range consumers {
-				ch, err := r.consume(exchangeName, &consumer)
-				if err != nil {
-					r.logger.Printf("Failed to recreate consumer: %s. Retrying...", err)
-					time.Sleep(time.Duration(r.config.ReconnectSec) * time.Second)
-					continue
-				}
-				go messageHandler(r.ctx, ch, consumer.Handler)
-			}
-		}
+// 		// 重新设置consumers
+// 		for exchangeName, consumers := range r.config.Consumers {
+// 			for _, consumer := range consumers {
+// 				ch, err := r.consume(exchangeName, &consumer)
+// 				if err != nil {
+// 					r.logger.Printf("Failed to recreate consumer: %s. Retrying...", err)
+// 					time.Sleep(time.Duration(r.config.ReconnectSec) * time.Second)
+// 					continue
+// 				}
+// 				go messageHandler(r.ctx, ch, consumer.Handler)
+// 			}
+// 		}
 
-		r.logger.Println("Channel successfully reconnected")
-		return
-	}
-}
+// 		r.logger.Println("Channel successfully reconnected")
+// 		return
+// 	}
+// }
 
 func (r *RabbitMQ) reconnect() {
 	for {
@@ -254,11 +254,27 @@ func (r *RabbitMQ) reconnect() {
 }
 
 func (r *RabbitMQ) handleReconnect() {
+	// go func() {
+	// 	err := <-r.conn.NotifyClose(make(chan *amqp.Error))
+	// 	if err != nil {
+	// 		r.logger.Printf("Connection closed: %s", err)
+	// 		r.reconnect()
+	// 	}
+	// }()
+	r.check()
+}
+
+func (r *RabbitMQ) check() {
 	go func() {
-		err := <-r.conn.NotifyClose(make(chan *amqp.Error))
-		if err != nil {
-			r.logger.Printf("Connection closed: %s", err)
-			r.reconnect()
+		for {
+			select {
+			case <-r.ctx.Done():
+				return
+			case <-time.After(time.Second * 5):
+				if r.conn.IsClosed() {
+					r.reconnect()
+				}
+			}
 		}
 	}()
 }

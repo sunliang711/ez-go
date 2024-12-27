@@ -11,7 +11,7 @@ type User struct {
 }
 
 func main() {
-	configs := []ezdb.DatabaseConfig{{
+	configs := []*ezdb.DatabaseConfig{{
 		Name:   "mysql",
 		Dsn:    "root:root@tcp(10.1.9.120:3306)/go_admin2?charset=utf8&parseTime=True&loc=Local&timeout=1000ms",
 		Driver: "mysql",
