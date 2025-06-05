@@ -1,23 +1,33 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/sunliang711/ez-go/ezdb"
 	"gorm.io/gorm"
 )
 
 type User struct {
 	gorm.Model
-	Name string `gorm:"type:varchar(100);not null;"`
+	Name string `gorm:"type:text;not null;"`
+	Age  uint   `gorm:"type:tinyint;"`
 }
 
 func main() {
-	configs := []*ezdb.DatabaseConfig{{
-		Name:   "mysql",
-		Dsn:    "root:root@tcp(10.1.9.120:3306)/go_admin2?charset=utf8&parseTime=True&loc=Local&timeout=1000ms",
-		Driver: "mysql",
-		Tables: []ezdb.Table{{Name: "users", Definition: &User{}}},
-		Log:    "silent",
-	}}
+	configs := []*ezdb.DatabaseConfig{
+		{
+			Name:   "mysql",
+			Dsn:    "root:comecome@tcp(10.1.9.155:3306)/eagle_db01?charset=utf8&parseTime=True&loc=Local&timeout=1000ms",
+			Driver: ezdb.DRIVER_MYSQL,
+			Tables: []ezdb.Table{
+				{Name: "users", Definition: &User{}},
+			},
+			Log:               ezdb.LOG_LEVEL_INFO,
+			ReadWriteSeparate: true,
+			Replicas:          "",
+			Policy:            ezdb.Random,
+		},
+	}
 	db, err := ezdb.NewDatabase(configs, true)
 	if err != nil {
 		panic(err)
@@ -26,9 +36,11 @@ func main() {
 
 	defer db.Close()
 
-	err = db.GetDB("mysql").Create(&User{Name: "sunliang22"}).Error
+	user := &User{Name: "sunl"}
+	err = db.GetDB("mysql").Create(user).Error
 	if err != nil {
 		panic(err)
 	}
+	fmt.Printf("User created: %+v\n", user)
 
 }

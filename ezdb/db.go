@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	glogger "gorm.io/gorm/logger"
+	"gorm.io/plugin/dbresolver"
 )
 
 type Database struct {
@@ -18,40 +20,71 @@ type Database struct {
 	logger  *log.Logger
 }
 
-const (
-	DB_MYSQL    = "mysql"
-	DB_SQLITE   = "sqlite"
-	DB_POSTGRES = "postgres"
-)
+type Driver int8
+
+func (d *Driver) String() string {
+	switch *d {
+	case DRIVER_MYSQL:
+		return "mysql"
+	case DRIVER_SQLITE:
+		return "sqlite"
+	case DRIVER_POSTGRES:
+		return "postgres"
+	default:
+		return "unknown"
+	}
+}
 
 const (
-	DBLOG_SILENT = "silent"
-	DBLOG_INFO   = "info"
-	DBLOG_ERROR  = "error"
-	DBLOG_WARN   = "warn"
+	DRIVER_MYSQL    Driver = iota // MySQL
+	DRIVER_SQLITE                 // SQLite
+	DRIVER_POSTGRES               // PostgreSQL
 )
 
-var opens = map[string]func(string) gorm.Dialector{
-	DB_MYSQL:    mysql.Open,
-	DB_SQLITE:   sqlite.Open,
-	DB_POSTGRES: postgres.Open,
+type LogLevel int8
+
+const (
+	LOG_LEVEL_SILENT LogLevel = iota // Silent
+	LOG_LEVEL_INFO                   // Info
+	LOG_LEVEL_ERROR                  // Error
+	LOG_LEVEL_WARN                   // Warn
+)
+
+type Policy int8
+
+const (
+	Random           Policy = iota // Random
+	RoundRobin                     // Round Robin
+	StrictRoundRobin               // Strict Round Robin
+)
+
+var opens = map[Driver]func(string) gorm.Dialector{
+	DRIVER_MYSQL:    mysql.Open,
+	DRIVER_SQLITE:   sqlite.Open,
+	DRIVER_POSTGRES: postgres.Open,
 }
 
 type DatabaseConfig struct {
 	Name   string
 	Dsn    string
-	Driver string
+	Driver Driver
 	Tables []Table
-	Log    string // silent, info, warn, error
+	Log    LogLevel
+
+	// ReadWriteSeparate 是否开启读写分离
+	ReadWriteSeparate bool
+	// Replicas 读写分离时的从库地址，多个地址用||分隔
+	Replicas string
+	Policy   Policy // 读写分离策略，默认随机
 }
 
 func (cfg *DatabaseConfig) Check() error {
 	switch cfg.Driver {
-	case DB_MYSQL:
-	case DB_SQLITE:
-	case DB_POSTGRES:
+	case DRIVER_MYSQL:
+	case DRIVER_SQLITE:
+	case DRIVER_POSTGRES:
 	default:
-		return fmt.Errorf("check database config with driver: %s error: %w", cfg.Driver, ErrInvalidDBDriver)
+		return fmt.Errorf("check database config with driver: %v error: %w", cfg.Driver, ErrInvalidDBDriver)
 	}
 	return nil
 }
@@ -68,7 +101,10 @@ func NewDatabase(configs []*DatabaseConfig, init bool) (*Database, error) {
 		if err != nil {
 			return nil, err
 		}
-		db.AddDatabase(config)
+
+		if err := db.AddDatabase(config); err != nil {
+			return nil, err
+		}
 	}
 
 	if init {
@@ -82,8 +118,26 @@ func NewDatabase(configs []*DatabaseConfig, init bool) (*Database, error) {
 }
 
 // AddDatabase 增加数据库配置
-func (db *Database) AddDatabase(config *DatabaseConfig) {
+func (db *Database) AddDatabase(config *DatabaseConfig) error {
+	// 检查是否已经存在同名的配置
+	if _, exists := db.configs[config.Name]; exists {
+		return fmt.Errorf("duplicate database config name: %s", config.Name)
+	}
 	db.configs[config.Name] = config
+
+	return nil
+}
+
+// GetDatabaseConfig
+func (db *Database) GetDatabaseConfig(name string) *DatabaseConfig {
+	return db.configs[name]
+}
+
+// AddTable 增加表
+func (db *Database) AddTable(name string, table Table) {
+	if cfg, ok := db.configs[name]; ok {
+		cfg.Tables = append(cfg.Tables, table)
+	}
 }
 
 // Init 初始化数据库连接
@@ -95,24 +149,70 @@ func (db *Database) Init() error {
 	for _, config := range db.configs {
 		db.logger.Printf("open database: %s", config.Name)
 
+		driver := opens[config.Driver]
+
 		var logger glogger.Interface
 		switch config.Log {
-		case DBLOG_SILENT:
+		case LOG_LEVEL_SILENT:
 			logger = glogger.Default.LogMode(glogger.Silent)
-		case DBLOG_ERROR:
+		case LOG_LEVEL_ERROR:
 			logger = glogger.Default.LogMode(glogger.Error)
-		case DBLOG_WARN:
+		case LOG_LEVEL_WARN:
 			logger = glogger.Default.LogMode(glogger.Warn)
-		case DBLOG_INFO:
+		case LOG_LEVEL_INFO:
 			logger = glogger.Default.LogMode(glogger.Info)
 
 		default:
 			logger = glogger.Default.LogMode(glogger.Silent)
 		}
-		conn, err := gorm.Open(opens[config.Driver](config.Dsn), &gorm.Config{Logger: logger})
+		conn, err := gorm.Open(driver(config.Dsn), &gorm.Config{Logger: logger})
 		if err != nil {
 			return fmt.Errorf("open database %s error: %v", config.Name, err)
 		}
+
+		// 读写分离
+		var replicas []gorm.Dialector
+		if config.ReadWriteSeparate && config.Replicas != "" {
+			// parse replicas
+			replicaList := strings.Split(config.Replicas, "||")
+			if len(replicaList) == 0 {
+				return fmt.Errorf("read write separate replicas is empty for database %s", config.Name)
+			}
+			var policy dbresolver.Policy
+			switch config.Policy {
+			case Random:
+				policy = dbresolver.RandomPolicy{}
+			case RoundRobin:
+				policy = dbresolver.RoundRobinPolicy()
+			case StrictRoundRobin:
+				policy = dbresolver.StrictRoundRobinPolicy()
+			default:
+				return fmt.Errorf("invalid read write separate policy: %v for database %s", config.Policy, config.Name)
+			}
+
+			// open replicas
+			for _, r := range replicaList {
+				if len(r) == 0 {
+					continue // 跳过空地址
+				}
+				db.logger.Printf("open replica database: %s", r)
+				replicas = append(replicas, driver(r))
+			}
+
+			if len(replicas) > 0 {
+				dbresolverConfig := dbresolver.Config{
+					Sources:  []gorm.Dialector{driver(config.Dsn)},
+					Replicas: replicas,
+					Policy:   policy,
+				}
+				readWritePlugin := dbresolver.Register(dbresolverConfig)
+				if err := conn.Use(readWritePlugin); err != nil {
+					return fmt.Errorf("use read write plugin error: %v", err)
+				}
+			}
+		}
+
+		db.logger.Printf("open database %s success", config.Name)
 		db.dbs[config.Name] = conn
 
 		// migrate tables

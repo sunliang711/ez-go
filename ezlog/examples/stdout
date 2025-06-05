@@ -1,0 +1,2 @@
+{"level":"debug","service":"aa","caller":"/Users/eagle/Sync/ez-go/ezlog/examples/main.go:18","time":"2025-06-05T18:25:23+08:00","message":"This is a debug message"}
+{"level":"info","service":"aa","caller":"/Users/eagle/Sync/ez-go/ezlog/examples/main.go:19","time":"2025-06-05T18:25:23+08:00","message":"This is an info message"}
