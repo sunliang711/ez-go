@@ -10,7 +10,7 @@ import (
 // LoadConfig 加载并合并多个配置文件和环境变量到给定的结构体中
 // paths中的配置文件按顺序读取，后面的配置文件会覆盖前面的配置文件
 // 文件格式可以是json、yaml、toml
-func LoadConfigFromFilesAndEnv(envPrefix string, files []string, config interface{}) error {
+func LoadConfigFromFilesAndEnv(envPrefix string, files []string, config any) error {
 	v := viper.New()
 
 	// 设置环境变量前缀

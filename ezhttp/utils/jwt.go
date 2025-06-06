@@ -10,7 +10,7 @@ import (
 
 // GenJwtToken 使用key作为签名秘钥来生成jwt token，并且在token里包含了自定义数据data
 // 当配置文件中包含jwt.exp字段，并且该字段大于零时，在jwt token里会加入exp来表示token过期时间
-func GenJwtToken(secret string, duration int, data map[string]interface{}) (string, error) {
+func GenJwtToken(secret string, duration int, data map[string]any) (string, error) {
 	mapClaims := jwt.MapClaims{}
 
 	if duration > 0 {
@@ -32,7 +32,7 @@ func GenJwtToken(secret string, duration int, data map[string]interface{}) (stri
 // ParseJwtToken 解析jwt token，返回*jwt.Token对象
 func ParseJwtToken(token string, secret string) (*jwt.Token, error) {
 	token = strings.TrimPrefix(token, "Bearer ")
-	t, err := jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
+	t, err := jwt.Parse(token, func(t *jwt.Token) (any, error) {
 		return []byte(secret), nil
 	})
 
