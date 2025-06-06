@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	grpcServer := ezgrpc.New(ezgrpc.WithPort(9000), ezgrpc.WithHealth(true))
+	grpcServer := ezgrpc.New(ezgrpc.WithPort(9000), ezgrpc.WithHealth())
 	srv := MyService{}
 	services := []ezgrpc.Service{{
 		Desc: &ledger_manager_service.LedgerManagerService_ServiceDesc,

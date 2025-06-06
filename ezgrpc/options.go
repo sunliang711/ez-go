@@ -20,8 +20,8 @@ func WithPort(port int) Option {
 	}
 }
 
-func WithHealth(health bool) Option {
+func WithHealth() Option {
 	return func(so *Options) {
-		so.health = health
+		so.health = true
 	}
 }
