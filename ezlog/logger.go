@@ -106,7 +106,7 @@ func SetLog(opts ...Option) {
 	case Split:
 		stdoutWriter := levelFilterWriter{
 			writer:   os.Stdout,
-			minLevel: zerolog.DebugLevel,
+			minLevel: zerolog.TraceLevel,
 			maxLevel: zerolog.InfoLevel,
 		}
 

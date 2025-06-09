@@ -1,4 +1,0 @@
-{"level":"warn","service":"aa","caller":"/Users/eagle/Sync/ez-go/ezlog/examples/main.go:20","time":"2025-06-05T18:25:23+08:00","message":"This is a warning message"}
-{"level":"error","service":"aa","caller":"/Users/eagle/Sync/ez-go/ezlog/examples/main.go:21","time":"2025-06-05T18:25:23+08:00","message":"This is an error message"}
-{"level":"fatal","service":"aa","caller":"/Users/eagle/Sync/ez-go/ezlog/examples/main.go:22","time":"2025-06-05T18:25:23+08:00","message":"This is a fatal message"}
-exit status 1

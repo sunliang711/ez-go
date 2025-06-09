@@ -10,11 +10,12 @@ func main() {
 	ezlog.SetLog(
 		ezlog.WithCaller(),
 		ezlog.WithTimestamp(),
-		ezlog.WithLevel(zerolog.DebugLevel),
+		ezlog.WithLevel(zerolog.TraceLevel),
 		ezlog.WithServiceName("aa"),
 		ezlog.WithWriter(ezlog.Split),
 	)
 
+	log.Trace().Msg("This is a trace message")
 	log.Debug().Msg("This is a debug message")
 	log.Info().Msg("This is an info message")
 	log.Warn().Msg("This is a warning message")
