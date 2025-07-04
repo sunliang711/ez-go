@@ -3,13 +3,13 @@ package server
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog"
+	"github.com/sunliang711/ez-go/ezhttp/utils"
 
 	swagFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -18,8 +18,8 @@ import (
 type HttpServer struct {
 	gin *gin.Engine
 
-	server      *http.Server
-	middlewares []Middleware
+	server            *http.Server
+	globalMiddlewares []Middleware
 
 	enableSwag bool
 
@@ -27,7 +27,9 @@ type HttpServer struct {
 	corsConfig cors.Config
 	// jwtSecret  string
 
-	logger *log.Logger
+	// logger *log.Logger
+	//
+	enableLog bool
 
 	routes []Routes
 
@@ -40,6 +42,7 @@ type serverOptions struct {
 	enableSwag bool
 	enableCors bool
 	corsConfig cors.Config
+	enableLog  bool
 }
 type ServerOption func(*serverOptions)
 
@@ -73,6 +76,13 @@ func WithCorsConfig(corsConfig cors.Config) ServerOption {
 	}
 }
 
+// EnableLog enables logging
+func EnableLog() ServerOption {
+	return func(o *serverOptions) {
+		o.enableLog = true
+	}
+}
+
 // func NewHttpServer(host string, port int, enableSwag, enableCors bool, corsConfig cors.Config) *HttpServer {
 func NewHttpServer(options ...ServerOption) *HttpServer {
 	defaultOptions := &serverOptions{
@@ -81,6 +91,7 @@ func NewHttpServer(options ...ServerOption) *HttpServer {
 		enableSwag: false,
 		enableCors: false,
 		corsConfig: cors.Config{},
+		enableLog:  false,
 	}
 
 	for _, opt := range options {
@@ -101,12 +112,13 @@ func NewHttpServer(options ...ServerOption) *HttpServer {
 	}
 
 	return &HttpServer{
-		server:     srv,
-		gin:        ginEngine,
-		logger:     log.New(os.Stdout, "|HTTP_SERVER| ", log.LstdFlags),
+		server: srv,
+		gin:    ginEngine,
+		// logger:     log.New(os.Stdout, "|HTTP_SERVER| ", log.LstdFlags),
 		enableSwag: defaultOptions.enableSwag,
 		enableCors: defaultOptions.enableCors,
 		corsConfig: defaultOptions.corsConfig,
+		enableLog:  defaultOptions.enableLog,
 		// jwtSecret:  jwtSecret,
 	}
 }
@@ -116,7 +128,7 @@ func (s *HttpServer) setupSwag() {
 		return
 	}
 	// setup swag
-	s.logger.Printf("setup swag")
+	utils.Log(s.enableLog, zerolog.InfoLevel, "setup swag")
 	s.gin.GET("/swagger/*any", ginSwagger.WrapHandler(swagFiles.Handler))
 }
 
@@ -125,8 +137,8 @@ func (s *HttpServer) setupCors() {
 		return
 	}
 	// setup cors
-	s.logger.Printf("setup cors")
-	s.AddMiddlewares([]Middleware{{Name: "gin-cors", Handler: cors.New(s.corsConfig)}})
+	utils.Log(s.enableLog, zerolog.InfoLevel, "setup cors ")
+	s.AddGlobalMiddlewares([]Middleware{{Name: "gin-cors", Handler: cors.New(s.corsConfig)}})
 
 }
 
@@ -134,13 +146,13 @@ func (s *HttpServer) GetEngine() *gin.Engine {
 	return s.gin
 }
 
-func (s *HttpServer) AddMiddlewares(mws []Middleware) {
-	s.middlewares = append(s.middlewares, mws...)
+func (s *HttpServer) AddGlobalMiddlewares(mws []Middleware) {
+	s.globalMiddlewares = append(s.globalMiddlewares, mws...)
 }
 
-func (s *HttpServer) setupMiddlewares() {
-	for _, middleware := range s.middlewares {
-		s.logger.Printf("setup middleware: %s", middleware.Name)
+func (s *HttpServer) setupGlobalMiddlewares() {
+	for _, middleware := range s.globalMiddlewares {
+		utils.Log(s.enableLog, zerolog.InfoLevel, "setup global middleware: %s", middleware.Name)
 		s.gin.Use(middleware.Handler)
 	}
 }
@@ -181,6 +193,7 @@ func (s *HttpServer) setupRoutes() {
 			// 添加handler
 			middlewaresAndHandler = append(middlewaresAndHandler, handler.Handler)
 
+			utils.Log(s.enableLog, zerolog.InfoLevel, "setup route: %s %s", handler.Method, routes.GroupPath+handler.Path)
 			switch handler.Method {
 			case http.MethodPost:
 				group.POST(handler.Path, middlewaresAndHandler...)
@@ -191,14 +204,14 @@ func (s *HttpServer) setupRoutes() {
 			case http.MethodDelete:
 				group.DELETE(handler.Path, middlewaresAndHandler...)
 			default:
-				s.logger.Printf("setup routes: unsupport HTTP method: %s", handler.Method)
+				utils.Log(s.enableLog, zerolog.ErrorLevel, "setup routes: unsupport HTTP method: %s", handler.Method)
 			}
 		}
 	}
 }
 
 func (s *HttpServer) start() {
-	s.logger.Printf("start http server on: %s", s.server.Addr)
+	utils.Log(s.enableLog, zerolog.InfoLevel, "start http server on: %s", s.server.Addr)
 	go func() {
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			panic(fmt.Sprintf("listen: %s\n", err))
@@ -238,7 +251,7 @@ func (s *HttpServer) Start() error {
 	s.setupCors()
 
 	// 设置中间件
-	s.setupMiddlewares()
+	s.setupGlobalMiddlewares()
 
 	// 设置swagger
 	s.setupSwag()
@@ -256,7 +269,7 @@ func (s *HttpServer) Start() error {
 }
 
 func (s *HttpServer) Stop() error {
-	s.logger.Printf("shutdown http server")
+	utils.Log(s.enableLog, zerolog.InfoLevel, "shutdown http server")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -264,7 +277,7 @@ func (s *HttpServer) Stop() error {
 	// 优雅关闭服务
 	err := s.server.Shutdown(ctx)
 	if err != nil {
-		s.logger.Printf("shutdown http server error: %v", err)
+		utils.Log(s.enableLog, zerolog.ErrorLevel, "shutdown http server error: %v", err)
 		return err
 	}
 

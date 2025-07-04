@@ -8,13 +8,13 @@ import (
 	"github.com/dgrijalva/jwt-go"
 )
 
-// GenJwtToken 使用key作为签名秘钥来生成jwt token，并且在token里包含了自定义数据data
+// GenerateJwtToken 使用key作为签名秘钥来生成jwt token，并且在token里包含了自定义数据data
 // 当配置文件中包含jwt.exp字段，并且该字段大于零时，在jwt token里会加入exp来表示token过期时间
-func GenJwtToken(secret string, duration int, data map[string]any) (string, error) {
+func GenerateJwtToken(secret string, duration int, data map[string]any) (string, error) {
 	mapClaims := jwt.MapClaims{}
 
 	if duration > 0 {
-		mapClaims["exp"] = time.Now().Add(time.Second * time.Duration(duration))
+		mapClaims["exp"] = time.Now().Add(time.Second * time.Duration(duration)).Unix()
 	}
 
 	for k, v := range data {
