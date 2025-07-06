@@ -77,9 +77,9 @@ func WithCorsConfig(corsConfig cors.Config) ServerOption {
 }
 
 // EnableLog enables logging
-func EnableLog() ServerOption {
+func EnableLog(e bool) ServerOption {
 	return func(o *serverOptions) {
-		o.enableLog = true
+		o.enableLog = e
 	}
 }
 
