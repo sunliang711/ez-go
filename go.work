@@ -8,4 +8,5 @@ use (
 	./ezcfg
 	./ezcamunda
 	./ezlog
+	./ezcache
 )
