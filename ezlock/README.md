@@ -13,7 +13,7 @@ EZLock是一个基于Redis的分布式锁库，提供了简单易用的API来实
 ## 安装
 
 ```bash
-go get github.com/yourusername/ez-go/ezlock
+go get github.com/sunliang711/ez-go/ezlock
 ```
 
 ## 使用方法
@@ -28,7 +28,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yourusername/ez-go/ezlock"
+	"github.com/sunliang711/ez-go/ezlock"
 )
 
 func main() {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog"
 )
 
 // redisLock Redis分布式锁实现
@@ -71,9 +72,7 @@ func (rl *redisLock) Acquire(ctx context.Context, key string, value string, ttl 
 		return ErrLockNotAcquired
 	}
 
-	if rl.options.EnableLog {
-		fmt.Printf("Lock acquired: %s (value: %s, ttl: %v)\n", key, value, ttl)
-	}
+	Log(rl.options.EnableLog, zerolog.InfoLevel, "Lock acquired: %s (value: %s, ttl: %v)", key, value, ttl)
 
 	return nil
 }
@@ -98,15 +97,11 @@ func (rl *redisLock) retryAcquire(ctx context.Context, key string, value string,
 		}
 
 		if success {
-			if rl.options.EnableLog {
-				fmt.Printf("Lock acquired after %d retries: %s (value: %s, ttl: %v)\n", i+1, key, value, ttl)
-			}
+			Log(rl.options.EnableLog, zerolog.InfoLevel, "Lock acquired after %d retries: %s (value: %s, ttl: %v)", i+1, key, value, ttl)
 			return nil
 		}
 
-		if rl.options.EnableLog {
-			fmt.Printf("Lock acquisition failed (retry %d): %s\n", i+1, key)
-		}
+		Log(rl.options.EnableLog, zerolog.DebugLevel, "Lock acquisition failed (retry %d): %s", i+1, key)
 	}
 
 	return ErrLockNotAcquired
@@ -134,9 +129,7 @@ func (rl *redisLock) Release(ctx context.Context, key string, value string) erro
 		return ErrLockNotHeld
 	}
 
-	if rl.options.EnableLog {
-		fmt.Printf("Lock released: %s (value: %s)\n", key, value)
-	}
+	Log(rl.options.EnableLog, zerolog.InfoLevel, "Lock released: %s (value: %s)", key, value)
 
 	return nil
 }
@@ -163,9 +156,7 @@ func (rl *redisLock) Refresh(ctx context.Context, key string, value string, ttl 
 		return ErrLockRenewalFailed
 	}
 
-	if rl.options.EnableLog {
-		fmt.Printf("Lock refreshed: %s (value: %s, ttl: %v)\n", key, value, ttl)
-	}
+	Log(rl.options.EnableLog, zerolog.InfoLevel, "Lock refreshed: %s (value: %s, ttl: %v)", key, value, ttl)
 
 	return nil
 }

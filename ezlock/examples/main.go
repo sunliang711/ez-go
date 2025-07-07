@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/yourusername/ez-go/ezlock"
+	"github.com/sunliang711/ez-go/ezlock"
 )
 
 func main() {

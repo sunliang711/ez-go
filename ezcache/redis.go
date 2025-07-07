@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog"
 )
 
 // redisCache Redis缓存实现
@@ -85,9 +86,7 @@ func (rc *redisCache) Set(ctx context.Context, key string, value interface{}, tt
 		return fmt.Errorf("failed to set value in redis: %w", err)
 	}
 
-	if rc.options.EnableLog {
-		fmt.Printf("Key set in redis cache: %s\n", key)
-	}
+	Log(rc.options.EnableLog, zerolog.InfoLevel, "Key set in redis cache: %s", key)
 
 	return nil
 }
@@ -127,9 +126,7 @@ func (rc *redisCache) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("failed to delete key from redis: %w", err)
 	}
 
-	if rc.options.EnableLog {
-		fmt.Printf("Key deleted from redis cache: %s\n", key)
-	}
+	Log(rc.options.EnableLog, zerolog.InfoLevel, "Key deleted from redis cache: %s", key)
 
 	return nil
 }
@@ -181,9 +178,7 @@ func (rc *redisCache) MSet(ctx context.Context, items map[string]interface{}, tt
 		return fmt.Errorf("failed to execute pipeline: %w", err)
 	}
 
-	if rc.options.EnableLog {
-		fmt.Printf("Batch set %d keys in redis cache\n", len(items))
-	}
+	Log(rc.options.EnableLog, zerolog.InfoLevel, "Batch set %d keys in redis cache", len(items))
 
 	return nil
 }
@@ -267,9 +262,7 @@ func (rc *redisCache) Clear(ctx context.Context) error {
 		return fmt.Errorf("failed to iterate over keys: %w", err)
 	}
 
-	if rc.options.EnableLog {
-		fmt.Println("Redis cache cleared")
-	}
+	Log(rc.options.EnableLog, zerolog.InfoLevel, "Redis cache cleared")
 
 	return nil
 }
