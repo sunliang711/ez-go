@@ -5,8 +5,8 @@ ezcache是ez-go项目的一个模块，提供了简单易用且功能强大的�
 ## 特性
 
 - **多后端支持**：
-  - 内存缓存：适用于单机应用
-  - Redis缓存：适用于分布式环境
+  - 内存缓存：使用 [patrickmn/go-cache](https://github.com/patrickmn/go-cache) 实现，适用于单机应用
+  - Redis缓存：使用 [redis/go-redis/v9](https://github.com/redis/go-redis) 实现，适用于分布式环境
   - 可扩展设计，便于添加更多后端
 
 - **丰富的功能**：
@@ -17,7 +17,7 @@ ezcache是ez-go项目的一个模块，提供了简单易用且功能强大的�
   - 缓存统计
 
 - **性能优化**：
-  - 内存缓存使用高效的数据结构
+  - 内存缓存基于高性能的go-cache库
   - 定期清理过期项
   - Redis操作批处理
 
@@ -86,7 +86,7 @@ func main() {
 
 ### 内存缓存
 
-适用于单机应用，数据存储在内存中。
+适用于单机应用，基于 [patrickmn/go-cache](https://github.com/patrickmn/go-cache) 实现，具有高性能和低内存占用特性。
 
 ```go
 cache, err := ezcache.NewCache(
@@ -177,4 +177,9 @@ go run main.go
 - 支持更多缓存后端（如Memcached）
 - 缓存穿透保护
 - 分级缓存
-- 更完善的监控指标 
+- 更完善的监控指标
+
+## 依赖
+
+- [patrickmn/go-cache](https://github.com/patrickmn/go-cache) - 内存缓存实现
+- [redis/go-redis/v9](https://github.com/redis/go-redis) - Redis客户端 

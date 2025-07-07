@@ -6,116 +6,55 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"sync"
 	"time"
+
+	"github.com/patrickmn/go-cache"
 )
 
-// memoryCache 是内存缓存实现
+// memoryCache 是基于go-cache的内存缓存实现
 type memoryCache struct {
-	data            sync.Map
-	options         *Options
-	stats           Stats
-	stopCleanupChan chan struct{}
-	statsMutex      sync.RWMutex
-}
-
-// cacheItem 缓存项结构
-type cacheItem struct {
-	Value      interface{}
-	Expiration int64 // Unix时间戳，0表示不过期
-}
-
-// 判断是否过期
-func (item *cacheItem) isExpired() bool {
-	if item.Expiration == 0 {
-		return false
-	}
-	return time.Now().UnixNano() > item.Expiration
+	cache   *cache.Cache
+	options *Options
+	stats   Stats
 }
 
 // newMemoryCache 创建一个新的内存缓存
 func newMemoryCache(options *Options) (Cache, error) {
+	// 设置默认清理间隔和默认过期时间
+	cleanupInterval := options.CleanupInterval
+	if cleanupInterval <= 0 {
+		cleanupInterval = time.Minute * 5
+	}
+
+	defaultTTL := options.DefaultTTL
+	if defaultTTL <= 0 {
+		defaultTTL = time.Hour
+	}
+
 	mc := &memoryCache{
+		cache:   cache.New(defaultTTL, cleanupInterval),
 		options: options,
 		stats: Stats{
 			Details: make(map[string]interface{}),
 		},
-		stopCleanupChan: make(chan struct{}),
 	}
-
-	// 启动定期清理过期项
-	go mc.startCleanupTimer()
 
 	return mc, nil
 }
 
-// startCleanupTimer 启动定期清理
-func (mc *memoryCache) startCleanupTimer() {
-	ticker := time.NewTicker(mc.options.CleanupInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			mc.cleanupExpired()
-		case <-mc.stopCleanupChan:
-			return
-		}
-	}
-}
-
-// cleanupExpired 清理过期项
-func (mc *memoryCache) cleanupExpired() {
-	var expiredCount int64
-
-	mc.data.Range(func(key, value interface{}) bool {
-		item, ok := value.(*cacheItem)
-		if !ok {
-			return true
-		}
-
-		if item.isExpired() {
-			keyStr, _ := key.(string)
-			mc.data.Delete(key)
-			expiredCount++
-
-			if mc.options.EnableLog {
-				fmt.Printf("过期键已删除: %s\n", keyStr)
-			}
-		}
-		return true
-	})
-
-	if expiredCount > 0 {
-		mc.statsMutex.Lock()
-		mc.stats.ExpiredCount += expiredCount
-		mc.statsMutex.Unlock()
-
-		if mc.options.EnableLog {
-			fmt.Printf("清理了 %d 个过期键\n", expiredCount)
-		}
-	}
-}
-
 // Set 设置缓存
 func (mc *memoryCache) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
-	var expiration int64
-
 	if ttl < 0 {
 		return ErrInvalidTTL
-	} else if ttl == 0 {
-		// 使用默认TTL
-		if mc.options.DefaultTTL > 0 {
-			expiration = time.Now().Add(mc.options.DefaultTTL).UnixNano()
-		}
-	} else {
-		expiration = time.Now().Add(ttl).UnixNano()
 	}
 
-	mc.data.Store(key, &cacheItem{
-		Value:      value,
-		Expiration: expiration,
-	})
+	// 使用指定的TTL或默认TTL
+	if ttl == 0 {
+		ttl = mc.options.DefaultTTL
+	}
+
+	// 设置缓存
+	mc.cache.Set(key, value, ttl)
 
 	if mc.options.EnableLog {
 		fmt.Printf("设置键: %s\n", key)
@@ -126,33 +65,21 @@ func (mc *memoryCache) Set(ctx context.Context, key string, value interface{}, t
 
 // Get 获取缓存
 func (mc *memoryCache) Get(ctx context.Context, key string, valuePtr interface{}) error {
-	value, ok := mc.data.Load(key)
-	if !ok {
-		mc.incrementMissCount()
-		return ErrKeyNotFound
-	}
-
-	item, ok := value.(*cacheItem)
-	if !ok {
-		mc.incrementMissCount()
-		return ErrKeyNotFound
-	}
-
-	if item.isExpired() {
-		mc.data.Delete(key)
-		mc.incrementMissCount()
-		mc.incrementExpiredCount()
+	// 获取值
+	value, found := mc.cache.Get(key)
+	if !found {
+		mc.stats.MissCount++
 		return ErrKeyNotFound
 	}
 
 	// 尝试将缓存的值转换为目标类型
-	err := mc.convertValue(item.Value, valuePtr)
+	err := mc.convertValue(value, valuePtr)
 	if err != nil {
-		mc.incrementMissCount()
+		mc.stats.MissCount++
 		return err
 	}
 
-	mc.incrementHitCount()
+	mc.stats.HitCount++
 	return nil
 }
 
@@ -181,29 +108,14 @@ func (mc *memoryCache) convertValue(src, dst interface{}) error {
 
 // Delete 删除缓存
 func (mc *memoryCache) Delete(ctx context.Context, key string) error {
-	mc.data.Delete(key)
+	mc.cache.Delete(key)
 	return nil
 }
 
 // Exists 检查键是否存在
 func (mc *memoryCache) Exists(ctx context.Context, key string) (bool, error) {
-	value, ok := mc.data.Load(key)
-	if !ok {
-		return false, nil
-	}
-
-	item, ok := value.(*cacheItem)
-	if !ok {
-		return false, nil
-	}
-
-	if item.isExpired() {
-		mc.data.Delete(key)
-		mc.incrementExpiredCount()
-		return false, nil
-	}
-
-	return true, nil
+	_, found := mc.cache.Get(key)
+	return found, nil
 }
 
 // MSet 批量设置
@@ -212,21 +124,14 @@ func (mc *memoryCache) MSet(ctx context.Context, items map[string]interface{}, t
 		return ErrInvalidTTL
 	}
 
-	var expiration int64
+	// 使用指定的TTL或默认TTL
 	if ttl == 0 {
-		// 使用默认TTL
-		if mc.options.DefaultTTL > 0 {
-			expiration = time.Now().Add(mc.options.DefaultTTL).UnixNano()
-		}
-	} else {
-		expiration = time.Now().Add(ttl).UnixNano()
+		ttl = mc.options.DefaultTTL
 	}
 
+	// 批量设置
 	for key, value := range items {
-		mc.data.Store(key, &cacheItem{
-			Value:      value,
-			Expiration: expiration,
-		})
+		mc.cache.Set(key, value, ttl)
 	}
 
 	if mc.options.EnableLog && len(items) > 0 {
@@ -241,27 +146,14 @@ func (mc *memoryCache) MGet(ctx context.Context, keys []string) (map[string]inte
 	result := make(map[string]interface{})
 
 	for _, key := range keys {
-		value, ok := mc.data.Load(key)
-		if !ok {
-			mc.incrementMissCount()
+		value, found := mc.cache.Get(key)
+		if !found {
+			mc.stats.MissCount++
 			continue
 		}
 
-		item, ok := value.(*cacheItem)
-		if !ok {
-			mc.incrementMissCount()
-			continue
-		}
-
-		if item.isExpired() {
-			mc.data.Delete(key)
-			mc.incrementMissCount()
-			mc.incrementExpiredCount()
-			continue
-		}
-
-		result[key] = item.Value
-		mc.incrementHitCount()
+		result[key] = value
+		mc.stats.HitCount++
 	}
 
 	return result, nil
@@ -269,15 +161,12 @@ func (mc *memoryCache) MGet(ctx context.Context, keys []string) (map[string]inte
 
 // Clear 清空缓存
 func (mc *memoryCache) Clear(ctx context.Context) error {
-	// 创建一个新的sync.Map替换掉旧的
-	mc.data = sync.Map{}
+	// 记录被清除的键数量
+	oldCount := mc.cache.ItemCount()
+	mc.stats.EvictedCount += int64(oldCount)
 
-	mc.statsMutex.Lock()
-	defer mc.statsMutex.Unlock()
-
-	// 重置统计信息
-	mc.stats.KeyCount = 0
-	mc.stats.EvictedCount += mc.stats.KeyCount
+	// 清空缓存
+	mc.cache.Flush()
 
 	if mc.options.EnableLog {
 		fmt.Println("内存缓存已清空")
@@ -288,32 +177,25 @@ func (mc *memoryCache) Clear(ctx context.Context) error {
 
 // Keys 获取所有键
 func (mc *memoryCache) Keys(ctx context.Context, pattern string) ([]string, error) {
-	var keys []string
+	// 获取所有缓存项
+	items := mc.cache.Items()
 
-	mc.data.Range(func(key, value interface{}) bool {
-		keyStr, ok := key.(string)
-		if !ok {
-			return true
+	// 如果模式为空，返回所有键
+	if pattern == "" || pattern == "*" {
+		keys := make([]string, 0, len(items))
+		for key := range items {
+			keys = append(keys, key)
 		}
+		return keys, nil
+	}
 
-		item, ok := value.(*cacheItem)
-		if !ok {
-			return true
+	// 否则，根据模式匹配键
+	keys := make([]string, 0)
+	for key := range items {
+		if wildcardMatch(key, pattern) {
+			keys = append(keys, key)
 		}
-
-		if item.isExpired() {
-			mc.data.Delete(key)
-			mc.incrementExpiredCount()
-			return true
-		}
-
-		// 如果pattern为空或者模式匹配
-		if pattern == "" || wildcardMatch(keyStr, pattern) {
-			keys = append(keys, keyStr)
-		}
-
-		return true
-	})
+	}
 
 	return keys, nil
 }
@@ -324,55 +206,30 @@ func (mc *memoryCache) Expire(ctx context.Context, key string, ttl time.Duration
 		return ErrInvalidTTL
 	}
 
-	valueIface, ok := mc.data.Load(key)
-	if !ok {
+	// 获取当前值
+	value, found := mc.cache.Get(key)
+	if !found {
 		return ErrKeyNotFound
 	}
 
-	item, ok := valueIface.(*cacheItem)
-	if !ok {
-		return ErrKeyNotFound
-	}
-
-	if item.isExpired() {
-		mc.data.Delete(key)
-		mc.incrementExpiredCount()
-		return ErrKeyNotFound
-	}
-
-	// 计算新的过期时间
-	var expiration int64
-	if ttl == 0 {
-		expiration = 0 // 永不过期
-	} else {
-		expiration = time.Now().Add(ttl).UnixNano()
-	}
-
-	// 创建新的item并存储
-	mc.data.Store(key, &cacheItem{
-		Value:      item.Value,
-		Expiration: expiration,
-	})
+	// 重新设置键的过期时间
+	mc.cache.Set(key, value, ttl)
 
 	return nil
 }
 
 // TTL 获取剩余过期时间
 func (mc *memoryCache) TTL(ctx context.Context, key string) (time.Duration, error) {
-	valueIface, ok := mc.data.Load(key)
-	if !ok {
+	// go-cache不提供直接获取TTL的方法，需要使用内部方法
+	// 获取缓存项的详细信息
+	item, found := mc.cache.Items()[key]
+	if !found {
 		return -2, ErrKeyNotFound // -2 表示键不存在
 	}
 
-	item, ok := valueIface.(*cacheItem)
-	if !ok {
-		return -2, ErrKeyNotFound
-	}
-
-	if item.isExpired() {
-		mc.data.Delete(key)
-		mc.incrementExpiredCount()
-		return -2, ErrKeyNotFound
+	// 检查是否已过期
+	if item.Expiration > 0 && time.Now().UnixNano() > item.Expiration {
+		return -2, ErrKeyNotFound // 已过期
 	}
 
 	// 如果没有设置过期时间
@@ -383,8 +240,6 @@ func (mc *memoryCache) TTL(ctx context.Context, key string) (time.Duration, erro
 	// 计算剩余时间
 	remaining := time.Duration(item.Expiration - time.Now().UnixNano())
 	if remaining < 0 {
-		mc.data.Delete(key)
-		mc.incrementExpiredCount()
 		return -2, ErrKeyNotFound
 	}
 
@@ -393,45 +248,17 @@ func (mc *memoryCache) TTL(ctx context.Context, key string) (time.Duration, erro
 
 // Stats 获取统计信息
 func (mc *memoryCache) Stats(ctx context.Context) (Stats, error) {
-	mc.statsMutex.RLock()
-	defer mc.statsMutex.RUnlock()
+	// 获取最新的键数量
+	keyCount := mc.cache.ItemCount()
 
-	// 计算当前键数量
-	var keyCount int64
-	mc.data.Range(func(_, _ interface{}) bool {
-		keyCount++
-		return true
-	})
-
+	// 更新统计信息
 	stats := mc.stats
-	stats.KeyCount = keyCount
+	stats.KeyCount = int64(keyCount)
+
+	// 添加go-cache内部信息到详情
+	stats.Details["go_cache_version"] = "v2.1.0"
 
 	return stats, nil
-}
-
-// 更新统计信息的辅助方法
-func (mc *memoryCache) incrementHitCount() {
-	mc.statsMutex.Lock()
-	defer mc.statsMutex.Unlock()
-	mc.stats.HitCount++
-}
-
-func (mc *memoryCache) incrementMissCount() {
-	mc.statsMutex.Lock()
-	defer mc.statsMutex.Unlock()
-	mc.stats.MissCount++
-}
-
-func (mc *memoryCache) incrementExpiredCount() {
-	mc.statsMutex.Lock()
-	defer mc.statsMutex.Unlock()
-	mc.stats.ExpiredCount++
-}
-
-func (mc *memoryCache) incrementEvictedCount() {
-	mc.statsMutex.Lock()
-	defer mc.statsMutex.Unlock()
-	mc.stats.EvictedCount++
 }
 
 // wildcardMatch 实现简单的通配符匹配
@@ -441,9 +268,23 @@ func wildcardMatch(s, pattern string) bool {
 		return true
 	}
 
-	// 这里实现一个简单的通配符匹配
-	// 在实际场景中可能需要更复杂的实现
-	// 或者使用现有的库
+	// 这里我们实现一个简单的模式匹配
+	// 实际生产中可能需要更复杂的实现或使用正则表达式
+	if pattern == s {
+		return true
+	}
 
-	return false // 简化版本，仅支持"*"完全匹配
+	// 检查是否是以*开头的模式
+	if len(pattern) > 0 && pattern[len(pattern)-1] == '*' {
+		prefix := pattern[:len(pattern)-1]
+		return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+	}
+
+	// 检查是否是以*结尾的模式
+	if len(pattern) > 0 && pattern[0] == '*' {
+		suffix := pattern[1:]
+		return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
+	}
+
+	return false // 其他情况默认不匹配
 }
