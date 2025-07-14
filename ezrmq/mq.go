@@ -82,6 +82,10 @@ func (r *RabbitMQ) Connect() error {
 	var err error
 	var options []amqpextra.Option
 
+	// 创建状态通知通道 - 使用缓冲通道
+	dialerStateCh := make(chan amqpextra.State, 10)
+	options = append(options, amqpextra.WithNotify(dialerStateCh))
+
 	// 设置连接重试
 	options = append(options, amqpextra.WithConnectionProperties(amqp.Table{
 		"connection_name": "ezrmq",
@@ -90,6 +94,7 @@ func (r *RabbitMQ) Connect() error {
 	options = append(options, amqpextra.WithRetryPeriod(time.Duration(r.config.ReconnectSec)*time.Second))
 	options = append(options, amqpextra.WithURL(r.config.URL))
 	options = append(options, amqpextra.WithContext(r.ctx))
+	options = append(options, amqpextra.WithLogger(r.logger))
 
 	// 如果使用TLS，设置TLS配置
 	if len(r.config.CaCertBytes) > 0 {
@@ -120,11 +125,20 @@ func (r *RabbitMQ) Connect() error {
 		return fmt.Errorf("failed to create dialer: %w", err)
 	}
 
+	// 监听dialer状态变化
+	go r.monitorDialerState(dialerStateCh)
+
 	// 初始化publisher
-	r.publisher, err = r.dialer.Publisher()
+	publisherStateCh := make(chan publisher.State, 10)
+	r.publisher, err = r.dialer.Publisher(
+		publisher.WithNotify(publisherStateCh),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to create publisher: %w", err)
 	}
+
+	// 监听publisher状态
+	go r.monitorPublisherState(publisherStateCh)
 
 	// 声明producer exchanges
 	for exchangeName, producerConfig := range r.config.Producers {
@@ -146,6 +160,32 @@ func (r *RabbitMQ) Connect() error {
 	}
 
 	return nil
+}
+
+// 监控Dialer状态
+func (r *RabbitMQ) monitorDialerState(stateCh <-chan amqpextra.State) {
+	for state := range stateCh {
+		if state.Ready != nil {
+			r.logger.Printf("RabbitMQ连接就绪")
+		}
+		if state.Unready != nil {
+			r.logger.Printf("RabbitMQ连接断开: %v", state.Unready.Err)
+		}
+	}
+	r.logger.Printf("Dialer状态监控结束")
+}
+
+// 监控Publisher状态
+func (r *RabbitMQ) monitorPublisherState(stateCh <-chan publisher.State) {
+	for state := range stateCh {
+		if state.Ready != nil {
+			r.logger.Printf("Publisher就绪")
+		}
+		if state.Unready != nil {
+			r.logger.Printf("Publisher断开: %v", state.Unready.Err)
+		}
+	}
+	r.logger.Printf("Publisher状态监控结束")
 }
 
 // declareExchange declares an exchange
@@ -245,6 +285,9 @@ func (r *RabbitMQ) setupConsumer(exchangeName string, consumerConfig *ConsumerCo
 		return nil
 	})
 
+	// 创建状态通知通道 - 使用缓冲通道
+	consumerStateCh := make(chan consumer.State, 10)
+
 	// 创建consumer options - 这里不再需要声明队列和绑定的选项，因为我们已经手动完成了
 	opts := []consumer.Option{
 		consumer.WithContext(r.ctx),
@@ -259,6 +302,7 @@ func (r *RabbitMQ) setupConsumer(exchangeName string, consumerConfig *ConsumerCo
 			consumerConfig.ConsumeOptions.Arguments,
 		),
 		consumer.WithHandler(handler),
+		consumer.WithNotify(consumerStateCh),
 	}
 
 	// 创建consumer
@@ -266,6 +310,10 @@ func (r *RabbitMQ) setupConsumer(exchangeName string, consumerConfig *ConsumerCo
 	if err != nil {
 		return err
 	}
+
+	// 监控consumer状态
+	queueName := consumerConfig.QueueOptions.Name
+	go r.monitorConsumerState(consumerStateCh, queueName)
 
 	// 存储consumer便于关闭
 	r.consumers = append(r.consumers, c)
@@ -279,6 +327,19 @@ func (r *RabbitMQ) setupConsumer(exchangeName string, consumerConfig *ConsumerCo
 	}()
 
 	return nil
+}
+
+// 监控Consumer状态
+func (r *RabbitMQ) monitorConsumerState(stateCh <-chan consumer.State, queueName string) {
+	for state := range stateCh {
+		if state.Ready != nil {
+			r.logger.Printf("Consumer队列 %s 已就绪", queueName)
+		}
+		if state.Unready != nil {
+			r.logger.Printf("Consumer队列 %s 断开连接: %v", queueName, state.Unready.Err)
+		}
+	}
+	r.logger.Printf("Consumer状态监控结束: %s", queueName)
 }
 
 // Publish publishes a message to the specified exchange with the given routing key
