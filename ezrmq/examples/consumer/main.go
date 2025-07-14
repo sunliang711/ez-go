@@ -35,8 +35,9 @@ BNT0wMUQ10C1eJnYoR7QgyWw3zZOAdo1ivBKagMvdyl+Bz99FrvGQVj4F0EYrvam
 7Ee+lNesGfJm6CHuN9eC2uxWNJCxCgr0C+lhnIW6c/23CtbUTqC79ZbBpSqxLUth
 AsBLPhYADl31nkFiJKO/r7Ewdwhwahl3lkCxnigBAeUnm0VICtmlNBdu
 -----END CERTIFICATE-----`)
+	caCertBytes = nil
 
-	url := "amqps://guest:guest@10.1.9.66:5671/"
+	url := "amqp://guest:guest@10.1.9.128:5672/"
 	// 1. 构建实例
 	rabbitMQ, err := ezrmq.NewRabbitMQ(url, 5, caCertBytes, nil, nil)
 	if err != nil {

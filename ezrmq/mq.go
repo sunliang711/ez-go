@@ -10,16 +10,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/makasim/amqpextra"
+	"github.com/makasim/amqpextra/consumer"
+	"github.com/makasim/amqpextra/publisher"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type RabbitMQ struct {
-	config       Config
-	conn         *amqp.Connection
-	ch           *amqp.Channel
-	wg           sync.WaitGroup
-	reconnectMux sync.Mutex
-	consumeMux   sync.Mutex
+	config     Config
+	dialer     *amqpextra.Dialer
+	publisher  *publisher.Publisher
+	consumers  []*consumer.Consumer
+	wg         sync.WaitGroup
+	consumeMux sync.Mutex
 
 	logger *log.Logger
 
@@ -42,7 +45,6 @@ func NewRabbitMQ(url string, reconnect int, caCertBytes, clientCert, clientKey [
 			Consumers:    make(map[string][]ConsumerConfig),
 			Producers:    make(map[string]ProducerConfig),
 		},
-		// closeCh:    make(chan struct{}),
 		logger:     log.New(os.Stdout, "|RMQ| ", log.LstdFlags),
 		ctx:        ctx,
 		cancelFunc: cancel,
@@ -53,7 +55,6 @@ func NewRabbitMQ(url string, reconnect int, caCertBytes, clientCert, clientKey [
 
 func (r *RabbitMQ) AddConsumer(exchangeName string, topic string, handler MessageHandlerFunc, queueOptions QueueOptions, consumeOptions ConsumeOptions) error {
 	config := ConsumerConfig{
-		// ExchangeOptions: exchangeOptions,
 		Handler:        handler,
 		Topic:          topic,
 		QueueOptions:   queueOptions,
@@ -78,18 +79,27 @@ func (r *RabbitMQ) AddProducer(exchangeName string, exchangeOptions ExchangeOpti
 }
 
 func (r *RabbitMQ) Connect() error {
-	r.reconnectMux.Lock()
-	defer r.reconnectMux.Unlock()
-
 	var err error
+	var options []amqpextra.Option
 
-	// cancelFunc 非空，使用服务端TLS
+	// 设置连接重试
+	options = append(options, amqpextra.WithConnectionProperties(amqp.Table{
+		"connection_name": "ezrmq",
+	}))
+
+	options = append(options, amqpextra.WithRetryPeriod(time.Duration(r.config.ReconnectSec)*time.Second))
+	options = append(options, amqpextra.WithURL(r.config.URL))
+	options = append(options, amqpextra.WithContext(r.ctx))
+
+	// 如果使用TLS，设置TLS配置
 	if len(r.config.CaCertBytes) > 0 {
 		r.logger.Printf("config server ca certificate")
 		caCertPool := x509.NewCertPool()
 		caCertPool.AppendCertsFromPEM(r.config.CaCertBytes)
 
-		var clientCertificates []tls.Certificate
+		tlsConfig := &tls.Config{
+			RootCAs: caCertPool,
+		}
 
 		// 如果clientCert和clientKey非空，则使用客户端TLS
 		if len(r.config.ClientCert) > 0 && len(r.config.ClientKey) > 0 {
@@ -98,303 +108,210 @@ func (r *RabbitMQ) Connect() error {
 			if err != nil {
 				return err
 			}
-			clientCertificates = append(clientCertificates, clientCert)
+			tlsConfig.Certificates = []tls.Certificate{clientCert}
 		}
 
-		tlsConfig := &tls.Config{
-			RootCAs:      caCertPool,
-			Certificates: clientCertificates,
-		}
-		r.conn, err = amqp.DialTLS(r.config.URL, tlsConfig)
-		if err != nil {
-			return err
-		}
-	} else {
-		r.conn, err = amqp.Dial(r.config.URL)
-		if err != nil {
-			return err
-		}
+		options = append(options, amqpextra.WithTLS(tlsConfig))
 	}
 
-	// 创建channel
-	if err := r.setupChannel(); err != nil {
-		r.conn.Close()
-		return err
+	// 初始化dialer
+	r.dialer, err = amqpextra.NewDialer(options...)
+	if err != nil {
+		return fmt.Errorf("failed to create dialer: %w", err)
 	}
 
-	r.handleReconnect()
+	// 初始化publisher
+	r.publisher, err = r.dialer.Publisher()
+	if err != nil {
+		return fmt.Errorf("failed to create publisher: %w", err)
+	}
 
-	// 声明produce exchange
-	for exchangeName, producer := range r.config.Producers {
+	// 声明producer exchanges
+	for exchangeName, producerConfig := range r.config.Producers {
 		r.logger.Printf("Declare exchange: %s", exchangeName)
-		err = r.ch.ExchangeDeclare(
-			exchangeName,                       // name
-			producer.ExchangeOptions.Type,      // type
-			producer.ExchangeOptions.Durable,   // durable
-			producer.ExchangeOptions.AutoDel,   // auto-deleted
-			producer.ExchangeOptions.Internal,  // internal
-			producer.ExchangeOptions.NoWait,    // no-wait
-			producer.ExchangeOptions.Arguments, // arguments
-		)
+		err = r.declareExchange(exchangeName, producerConfig.ExchangeOptions)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to declare exchange %s: %w", exchangeName, err)
 		}
-
 	}
 
-	// 遍历consume exchange, 声明queue并绑定exchange
-	for exchangeName, consumers := range r.config.Consumers {
-		for _, consumer := range consumers {
-			ch, err := r.consume(exchangeName, &consumer)
+	// 初始化consumers
+	for exchangeName, consumerConfigs := range r.config.Consumers {
+		for _, consumerConfig := range consumerConfigs {
+			err = r.setupConsumer(exchangeName, &consumerConfig)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to setup consumer for exchange %s: %w", exchangeName, err)
 			}
-			go messageHandler(r.ctx, ch, consumer.Handler)
 		}
 	}
 
 	return nil
 }
 
-// 新增setupChannel方法
-func (r *RabbitMQ) setupChannel() error {
-	var err error
-	r.ch, err = r.conn.Channel()
+// declareExchange declares an exchange
+func (r *RabbitMQ) declareExchange(exchangeName string, options ExchangeOptions) error {
+	conn, err := r.dialer.Connection(r.ctx)
 	if err != nil {
 		return err
 	}
+	defer conn.Close()
 
-	// // 监听channel关闭
-	// go func() {
-	// 	// 注意这里要先获取channel的引用，因为重连时r.ch会变化
-	// 	ch := r.ch
-	// 	chClose := ch.NotifyClose(make(chan *amqp.Error))
-	// 	select {
-	// 	case err := <-chClose:
-	// 		r.logger.Printf("Channel closed: %v", err)
-	// 		// 重新设置channel
-	// 		r.reconnectChannel()
-	// 	case <-r.ctx.Done():
-	// 		return
-	// 	}
-	// }()
-
-	return nil
-}
-
-// // 新增channel重连方法
-// func (r *RabbitMQ) reconnectChannel() {
-// 	r.reconnectMux.Lock()
-// 	defer r.reconnectMux.Unlock()
-
-// 	for {
-// 		r.logger.Println("Attempting to reconnect channel...")
-
-// 		// 检查connection是否正常，如果connection断开，会触发connection的重连
-// 		if r.conn.IsClosed() {
-// 			r.logger.Println("Connection is closed, waiting for connection recovery...")
-// 			time.Sleep(time.Duration(r.config.ReconnectSec) * time.Second)
-// 			continue
-// 		}
-
-// 		// 重新设置channel
-// 		if err := r.setupChannel(); err != nil {
-// 			r.logger.Printf("Failed to recreate channel: %s. Retrying in %d seconds...", err, r.config.ReconnectSec)
-// 			time.Sleep(time.Duration(r.config.ReconnectSec) * time.Second)
-// 			continue
-// 		}
-
-// 		// 重新声明exchanges
-// 		for exchangeName, producer := range r.config.Producers {
-// 			err := r.ch.ExchangeDeclare(
-// 				exchangeName,
-// 				producer.ExchangeOptions.Type,
-// 				producer.ExchangeOptions.Durable,
-// 				producer.ExchangeOptions.AutoDel,
-// 				producer.ExchangeOptions.Internal,
-// 				producer.ExchangeOptions.NoWait,
-// 				producer.ExchangeOptions.Arguments,
-// 			)
-// 			if err != nil {
-// 				r.logger.Printf("Failed to declare exchange: %s. Retrying...", err)
-// 				time.Sleep(time.Duration(r.config.ReconnectSec) * time.Second)
-// 				continue
-// 			}
-// 		}
-
-// 		// 重新设置consumers
-// 		for exchangeName, consumers := range r.config.Consumers {
-// 			for _, consumer := range consumers {
-// 				ch, err := r.consume(exchangeName, &consumer)
-// 				if err != nil {
-// 					r.logger.Printf("Failed to recreate consumer: %s. Retrying...", err)
-// 					time.Sleep(time.Duration(r.config.ReconnectSec) * time.Second)
-// 					continue
-// 				}
-// 				go messageHandler(r.ctx, ch, consumer.Handler)
-// 			}
-// 		}
-
-// 		r.logger.Println("Channel successfully reconnected")
-// 		return
-// 	}
-// }
-
-func (r *RabbitMQ) reconnect() {
-	for {
-		r.logger.Println("Attempting to reconnect...")
-		err := r.Connect()
-		if err == nil {
-			r.logger.Println("Reconnected to RabbitMQ")
-			return
-		}
-		r.logger.Printf("Failed to reconnect: %s. Retrying in %d seconds...", err, r.config.ReconnectSec)
-		time.Sleep(time.Duration(r.config.ReconnectSec) * time.Second)
+	ch, err := conn.Channel()
+	if err != nil {
+		return err
 	}
-}
+	defer ch.Close()
 
-func (r *RabbitMQ) handleReconnect() {
-	// go func() {
-	// 	err := <-r.conn.NotifyClose(make(chan *amqp.Error))
-	// 	if err != nil {
-	// 		r.logger.Printf("Connection closed: %s", err)
-	// 		r.reconnect()
-	// 	}
-	// }()
-	r.check()
-}
-
-func (r *RabbitMQ) check() {
-	go func() {
-		for {
-			select {
-			case <-r.ctx.Done():
-				return
-			case <-time.After(time.Second * 5):
-				if r.conn.IsClosed() {
-					r.reconnect()
-				}
-			}
-		}
-	}()
-}
-
-// TODO: mandatory immediate
-func (r *RabbitMQ) Publish(exchange, routingKey string, body []byte) error {
-	return r.ch.Publish(
-		exchange,   // exchange
-		routingKey, // routing key
-		false,      // mandatory
-		false,      // immediate
-		amqp.Publishing{
-			ContentType: "text/plain",
-			Body:        body,
-		},
+	return ch.ExchangeDeclare(
+		exchangeName,      // name
+		options.Type,      // type
+		options.Durable,   // durable
+		options.AutoDel,   // auto-deleted
+		options.Internal,  // internal
+		options.NoWait,    // no-wait
+		options.Arguments, // arguments
 	)
 }
 
-func (r *RabbitMQ) consume(exchangeName string, consumerConfig *ConsumerConfig) (<-chan amqp.Delivery, error) {
+// 添加手动绑定队列和交换机的方法
+func (r *RabbitMQ) bindQueueToExchange(queueName, exchangeName, routingKey string, noWait bool, arguments amqp.Table) error {
+	if arguments == nil {
+		arguments = amqp.Table{}
+	}
+
+	conn, err := r.dialer.Connection(r.ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	ch, err := conn.Channel()
+	if err != nil {
+		return err
+	}
+	defer ch.Close()
+
+	r.logger.Printf("Binding queue: %s to exchange: %s with topic: %s", queueName, exchangeName, routingKey)
+	return ch.QueueBind(
+		queueName,    // queue name
+		routingKey,   // routing key
+		exchangeName, // exchange
+		noWait,       // no-wait
+		arguments,    // arguments
+	)
+}
+
+// setupConsumer initializes a consumer
+func (r *RabbitMQ) setupConsumer(exchangeName string, consumerConfig *ConsumerConfig) error {
 	r.consumeMux.Lock()
 	defer r.consumeMux.Unlock()
 
-	var queue amqp.Queue
-	var err error
-	maxRetries := 5
-	retryInterval := time.Second * 2
-
-	for i := 0; i < maxRetries; i++ {
-		r.logger.Printf("Declare queue: %s", consumerConfig.QueueOptions.Name)
-		queue, err = r.ch.QueueDeclare(
-			consumerConfig.QueueOptions.Name,      // name
-			consumerConfig.QueueOptions.Durable,   // durable
-			consumerConfig.QueueOptions.AutoDel,   // delete when unused
-			consumerConfig.QueueOptions.Exclusive, // exclusive
-			consumerConfig.QueueOptions.NoWait,    // no-wait
-			consumerConfig.QueueOptions.Arguments, // arguments
-		)
-		if err == nil {
-			break
-		}
-		r.logger.Printf("Declare queue error: %v. Retrying in %v...", err, retryInterval)
-		time.Sleep(retryInterval)
-	}
-
+	// 首先需要确保队列存在
+	conn, err := r.dialer.Connection(r.ctx)
 	if err != nil {
-		return nil, fmt.Errorf("declare queue: %s error: %w", consumerConfig.QueueOptions.Name, err)
+		return err
 	}
+	defer conn.Close()
 
-	// 绑定exchange和queue
-	for i := 0; i < maxRetries; i++ {
-		r.logger.Printf("Bind queue: %v to exchange: %v with topic: %v", queue.Name, exchangeName, consumerConfig.Topic)
-		err = r.ch.QueueBind(
-			queue.Name,           // queue name
-			consumerConfig.Topic, // routing key
-			exchangeName,         // exchange
-			false,
-			nil,
-		)
-		if err == nil {
-			break
-		}
-		r.logger.Printf("QueueBind error: %v. Retrying in %v...", err, retryInterval)
-		time.Sleep(retryInterval)
-	}
-
+	ch, err := conn.Channel()
 	if err != nil {
-		return nil, fmt.Errorf("QueueBind error: %w", err)
+		return err
 	}
+	defer ch.Close()
 
-	r.logger.Printf("Consume with queue: %s", queue.Name)
-	msgs, err := r.ch.Consume(
-		queue.Name,                              // queue
-		"",                                      // consumer
-		consumerConfig.ConsumeOptions.AutoAck,   // auto-ack
-		consumerConfig.ConsumeOptions.Exclusive, // exclusive
-		consumerConfig.ConsumeOptions.NoLocal,   // no-local
-		consumerConfig.ConsumeOptions.NoWait,    // no-wait
-		consumerConfig.ConsumeOptions.Arguments, // args
+	// 声明队列
+	r.logger.Printf("Declaring queue: %s", consumerConfig.QueueOptions.Name)
+	_, err = ch.QueueDeclare(
+		consumerConfig.QueueOptions.Name,
+		consumerConfig.QueueOptions.Durable,
+		consumerConfig.QueueOptions.AutoDel,
+		consumerConfig.QueueOptions.Exclusive,
+		consumerConfig.QueueOptions.NoWait,
+		consumerConfig.QueueOptions.Arguments,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("Consume error: %w", err)
+		return fmt.Errorf("failed to declare queue: %w", err)
 	}
 
-	out := make(chan amqp.Delivery)
+	// 绑定队列到交换机
+	err = r.bindQueueToExchange(consumerConfig.QueueOptions.Name, exchangeName, consumerConfig.Topic, consumerConfig.QueueOptions.BindNoWait, consumerConfig.QueueOptions.BindArgs)
+	if err != nil {
+		return fmt.Errorf("failed to bind queue: %w", err)
+	}
+
+	// 创建消息处理函数的handler
+	handler := consumer.HandlerFunc(func(ctx context.Context, msg amqp.Delivery) interface{} {
+		consumerConfig.Handler(msg)
+		return nil
+	})
+
+	// 创建consumer options - 这里不再需要声明队列和绑定的选项，因为我们已经手动完成了
+	opts := []consumer.Option{
+		consumer.WithContext(r.ctx),
+		consumer.WithQueue(consumerConfig.QueueOptions.Name),
+		// 不需要WithExchange，因为我们已经手动绑定了
+		consumer.WithConsumeArgs(
+			"", // consumer name (auto-generated)
+			consumerConfig.ConsumeOptions.AutoAck,
+			consumerConfig.ConsumeOptions.Exclusive,
+			consumerConfig.ConsumeOptions.NoLocal,
+			consumerConfig.ConsumeOptions.NoWait,
+			consumerConfig.ConsumeOptions.Arguments,
+		),
+		consumer.WithHandler(handler),
+	}
+
+	// 创建consumer
+	c, err := r.dialer.Consumer(opts...)
+	if err != nil {
+		return err
+	}
+
+	// 存储consumer便于关闭
+	r.consumers = append(r.consumers, c)
+
+	// 启动consumer
 	r.wg.Add(1)
 	go func() {
-		defer func() {
-			defer r.wg.Done()
-			defer close(out)
-			r.logger.Printf("Consume from queue: %s exit", queue.Name)
-		}()
-
-		r.logger.Printf("Receive messages from queue: %s", queue.Name)
-		for {
-			select {
-			case msg, ok := <-msgs:
-				if !ok {
-					r.logger.Printf("Channel closed,exit")
-					return
-				}
-				out <- msg
-			case <-r.ctx.Done():
-				r.logger.Printf("Context done,exit")
-				return
-			}
-		}
+		defer r.wg.Done()
+		<-c.NotifyClosed()
+		r.logger.Printf("Consumer for queue %s has been closed", consumerConfig.QueueOptions.Name)
 	}()
-	return out, nil
+
+	return nil
 }
 
+// Publish publishes a message to the specified exchange with the given routing key
+func (r *RabbitMQ) Publish(exchange, routingKey string, body []byte) error {
+	return r.publisher.Publish(publisher.Message{
+		Context:   r.ctx,
+		Exchange:  exchange,
+		Key:       routingKey,
+		Mandatory: false,
+		Immediate: false,
+		Publishing: amqp.Publishing{
+			ContentType: "text/plain",
+			Body:        body,
+		},
+	})
+}
+
+// Close gracefully closes the RabbitMQ connection
 func (r *RabbitMQ) Close() {
 	r.logger.Println("Closing RabbitMQ connection...")
 	r.cancelFunc()
+
+	// Close publisher
+	if r.publisher != nil {
+		r.publisher.Close()
+	}
+
+	// Close dialer after all consumers have stopped
 	r.logger.Println("Waiting for all consumers to stop...")
 	r.wg.Wait()
 	r.logger.Println("All consumers stopped")
-	if err := r.ch.Close(); err != nil {
-		r.logger.Printf("Failed to close channel: %s", err)
-	}
-	if err := r.conn.Close(); err != nil {
-		r.logger.Printf("Failed to close connection: %s", err)
+
+	if r.dialer != nil {
+		r.dialer.Close()
 	}
 }
