@@ -6,6 +6,7 @@ import (
 	"github.com/sunliang711/ez-go/ezgrpc"
 	"github.com/sunliang711/ez-go/eztools"
 	"gitlab.atom8.io/hkbitex/exchange-protos/pbgo/ledger_manager_service"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -15,7 +16,17 @@ func main() {
 		Desc: &ledger_manager_service.LedgerManagerService_ServiceDesc,
 		Ss:   &srv,
 	}}
-	grpcServer.Start(services)
+	opts := []grpc.ServerOption{}
+
+	opts = append(opts,
+		grpc.ChainUnaryInterceptor(
+			ezgrpc.RequestParamInterceptor([]string{"/ledger_manager_service.LedgerManagerService/ListAsset"}),
+			ezgrpc.ResponseInterceptor([]string{"/ledger_manager_service.LedgerManagerService/ListAsset"}, 1024*1024),
+			ezgrpc.ValidatorInterceptor(),
+		),
+	)
+
+	grpcServer.Start(services, opts...)
 
 	eztools.WaitForSignal(nil)
 
