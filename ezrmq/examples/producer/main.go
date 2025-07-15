@@ -86,7 +86,7 @@ rq7qic/scGRARaFeSLWwFg7jn46aj3QVmfIn8U+HDqdXrBqJ9oe94a7U1rGSlLOP
 	_ = clientKey
 
 	url := "amqps://guest:guest@10.1.9.66:5671/"
-	url = "amqp://root:root@10.1.9.128:5672/"
+	url = "amqp://guest:guest@10.1.9.128:5672/"
 	// 1. 构建实例
 	rabbitMQ, err := ezrmq.NewRabbitMQ(url, 5, nil, nil, nil)
 	// rabbitMQ, err := rmq.NewRabbitMQ(url, 5, nil, nil, nil)
@@ -97,7 +97,7 @@ rq7qic/scGRARaFeSLWwFg7jn46aj3QVmfIn8U+HDqdXrBqJ9oe94a7U1rGSlLOP
 	exchangeName := "exchange001"
 	// 2. exchange参数
 	exchangeOptions := ezrmq.ExchangeOptions{
-		Type:    "fanout",
+		Type:    "topic",
 		Durable: true,
 	}
 
