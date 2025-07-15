@@ -1,9 +1,10 @@
 package ezgrpc
 
 type Options struct {
-	host   string
-	port   int
-	health bool
+	host      string
+	port      int
+	health    bool
+	enableLog bool
 }
 
 type Option func(*Options)
@@ -23,5 +24,11 @@ func WithPort(port int) Option {
 func WithHealth() Option {
 	return func(so *Options) {
 		so.health = true
+	}
+}
+
+func WithEnableLog(enable bool) Option {
+	return func(so *Options) {
+		so.enableLog = enable
 	}
 }

@@ -10,7 +10,11 @@ import (
 )
 
 func main() {
-	grpcServer := ezgrpc.New(ezgrpc.WithPort(9000), ezgrpc.WithHealth())
+	grpcServer := ezgrpc.New(
+		ezgrpc.WithPort(9000),
+		ezgrpc.WithHealth(),
+		ezgrpc.WithEnableLog(true),
+	)
 	srv := MyService{}
 	services := []ezgrpc.Service{{
 		Desc: &ledger_manager_service.LedgerManagerService_ServiceDesc,
@@ -20,16 +24,15 @@ func main() {
 
 	opts = append(opts,
 		grpc.ChainUnaryInterceptor(
-			ezgrpc.RequestParamInterceptor([]string{"/ledger_manager_service.LedgerManagerService/ListAsset"}),
-			ezgrpc.ResponseInterceptor([]string{"/ledger_manager_service.LedgerManagerService/ListAsset"}, 1024*1024),
-			ezgrpc.ValidatorInterceptor(),
+			ezgrpc.RequestParamInterceptor(true, []string{"/ledger_manager_service.LedgerManagerService/ListAsset"}),
+			ezgrpc.ResponseInterceptor(true, []string{"/ledger_manager_service.LedgerManagerService/ListAsset"}, 1024*1024),
+			ezgrpc.ValidatorInterceptor(true),
 		),
 	)
 
 	grpcServer.Start(services, opts...)
 
 	eztools.WaitForSignal(nil)
-
 }
 
 // MyService is the implementation of the LedgerManagerService

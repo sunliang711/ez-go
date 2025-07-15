@@ -2,10 +2,9 @@ package ezgrpc
 
 import (
 	"fmt"
-	"log"
 	"net"
-	"os"
 
+	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
@@ -18,11 +17,7 @@ type Service struct {
 
 type Server struct {
 	options Options
-
-	logger *log.Logger
-
-	server *grpc.Server
-	// opts   []grpc.ServerOption
+	server  *grpc.Server
 }
 
 func (d *Server) init(opts ...Option) {
@@ -33,12 +28,13 @@ func (d *Server) init(opts ...Option) {
 
 func New(opts ...Option) *Server {
 	options := Options{
-		host:   "",
-		port:   9090,
-		health: false,
+		host:      "",
+		port:      9090,
+		health:    false,
+		enableLog: false,
 	}
 
-	srv := &Server{options: options, logger: log.New(os.Stdout, "|GRPC_SERVER| ", log.LstdFlags)}
+	srv := &Server{options: options}
 	srv.init(opts...)
 
 	return srv
@@ -60,23 +56,20 @@ func (srv *Server) Start(services []Service, opts ...grpc.ServerOption) error {
 	}
 
 	srv.server = server
-	srv.logger.Printf("grpc server started at %s:%d\n", srv.options.host, srv.options.port)
+	Log(srv.options.enableLog, zerolog.InfoLevel, "grpc server started at %s:%d", srv.options.host, srv.options.port)
 
-	// err = server.Serve(lis)
-	// if err != nil {
-	// 	panic(err)
-	// }
 	go func() {
 		err = server.Serve(lis)
 		if err != nil {
+			Log(srv.options.enableLog, zerolog.FatalLevel, "failed to start grpc server: %v", err)
 			panic(err)
 		}
 	}()
 
 	return nil
-
 }
 
 func (srv *Server) Close() {
 	srv.server.Stop()
+	Log(srv.options.enableLog, zerolog.InfoLevel, "grpc server stopped")
 }
