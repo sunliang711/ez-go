@@ -69,6 +69,7 @@ type Options struct {
 
 	// Redis选项
 	RedisAddr      string // Redis地址
+	RedisUsername  string // Redis用户名
 	RedisPassword  string // Redis密码
 	RedisDB        int    // Redis数据库
 	RedisKeyPrefix string // Redis键前缀
@@ -106,11 +107,12 @@ func WithMaxEntries(max int) Option {
 }
 
 // WithRedisOptions 设置Redis选项
-func WithRedisOptions(addr, password string, db int) Option {
+func WithRedisOptions(addr, username, password string, db int) Option {
 	return func(o *Options) {
 		o.RedisAddr = addr
 		o.RedisPassword = password
 		o.RedisDB = db
+		o.RedisUsername = username
 	}
 }
 

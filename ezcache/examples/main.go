@@ -83,7 +83,7 @@ func demoRedisCache() {
 	// 创建Redis缓存实例
 	cache, err := ezcache.NewCache(
 		ezcache.WithCacheType(ezcache.RedisCache),
-		ezcache.WithRedisOptions(redisAddr, redisPassword, redisDB),
+		ezcache.WithRedisOptions(redisAddr, "", redisPassword, redisDB),
 		ezcache.WithRedisKeyPrefix("ezcache"),
 		ezcache.WithDefaultTTL(time.Minute*5),
 		ezcache.WithEnableLog(true),

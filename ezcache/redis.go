@@ -31,6 +31,7 @@ func newRedisCache(options *Options) (Cache, error) {
 
 	client := redis.NewClient(&redis.Options{
 		Addr:     options.RedisAddr,
+		Username: options.RedisUsername,
 		Password: options.RedisPassword,
 		DB:       options.RedisDB,
 	})
