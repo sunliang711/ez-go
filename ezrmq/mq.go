@@ -5,8 +5,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"log"
-	"os"
 	"sync"
 	"time"
 
@@ -14,6 +12,7 @@ import (
 	"github.com/makasim/amqpextra/consumer"
 	"github.com/makasim/amqpextra/publisher"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/rs/zerolog"
 )
 
 type RabbitMQ struct {
@@ -24,8 +23,6 @@ type RabbitMQ struct {
 	wg         sync.WaitGroup
 	consumeMux sync.Mutex
 
-	logger *log.Logger
-
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 }
@@ -33,7 +30,7 @@ type RabbitMQ struct {
 // NewRabbitMQ creates a new RabbitMQ instance
 // caCertBytes如果为空，则不使用服务端TLS
 // clientCert和clientKey如果为空，则不使用客户端TLS
-func NewRabbitMQ(url string, reconnect int, caCertBytes, clientCert, clientKey []byte) (*RabbitMQ, error) {
+func NewRabbitMQ(url string, reconnect int, caCertBytes, clientCert, clientKey []byte, enableLog bool) (*RabbitMQ, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &RabbitMQ{
 		config: Config{
@@ -44,8 +41,8 @@ func NewRabbitMQ(url string, reconnect int, caCertBytes, clientCert, clientKey [
 			ClientKey:    clientKey,
 			Consumers:    make(map[string][]ConsumerConfig),
 			Producers:    make(map[string]ProducerConfig),
+			EnableLog:    enableLog,
 		},
-		logger:     log.New(os.Stdout, "|RMQ| ", log.LstdFlags),
 		ctx:        ctx,
 		cancelFunc: cancel,
 	}
@@ -94,11 +91,10 @@ func (r *RabbitMQ) Connect() error {
 	options = append(options, amqpextra.WithRetryPeriod(time.Duration(r.config.ReconnectSec)*time.Second))
 	options = append(options, amqpextra.WithURL(r.config.URL))
 	options = append(options, amqpextra.WithContext(r.ctx))
-	options = append(options, amqpextra.WithLogger(r.logger))
 
 	// 如果使用TLS，设置TLS配置
 	if len(r.config.CaCertBytes) > 0 {
-		r.logger.Printf("config server ca certificate")
+		Log(r.config.EnableLog, zerolog.InfoLevel, "config server ca certificate")
 		caCertPool := x509.NewCertPool()
 		caCertPool.AppendCertsFromPEM(r.config.CaCertBytes)
 
@@ -108,7 +104,7 @@ func (r *RabbitMQ) Connect() error {
 
 		// 如果clientCert和clientKey非空，则使用客户端TLS
 		if len(r.config.ClientCert) > 0 && len(r.config.ClientKey) > 0 {
-			r.logger.Printf("config client certificate")
+			Log(r.config.EnableLog, zerolog.InfoLevel, "config client certificate")
 			clientCert, err := tls.X509KeyPair(r.config.ClientCert, r.config.ClientKey)
 			if err != nil {
 				return err
@@ -142,7 +138,7 @@ func (r *RabbitMQ) Connect() error {
 
 	// 声明producer exchanges
 	for exchangeName, producerConfig := range r.config.Producers {
-		r.logger.Printf("Declare exchange: %s", exchangeName)
+		Log(r.config.EnableLog, zerolog.InfoLevel, "Declare exchange: %s", exchangeName)
 		err = r.declareExchange(exchangeName, producerConfig.ExchangeOptions)
 		if err != nil {
 			return fmt.Errorf("failed to declare exchange %s: %w", exchangeName, err)
@@ -166,26 +162,26 @@ func (r *RabbitMQ) Connect() error {
 func (r *RabbitMQ) monitorDialerState(stateCh <-chan amqpextra.State) {
 	for state := range stateCh {
 		if state.Ready != nil {
-			r.logger.Printf("RabbitMQ连接就绪")
+			Log(r.config.EnableLog, zerolog.InfoLevel, "RabbitMQ连接就绪")
 		}
 		if state.Unready != nil {
-			r.logger.Printf("RabbitMQ连接断开: %v", state.Unready.Err)
+			Log(r.config.EnableLog, zerolog.InfoLevel, "RabbitMQ连接断开: %v", state.Unready.Err)
 		}
 	}
-	r.logger.Printf("Dialer状态监控结束")
+	Log(r.config.EnableLog, zerolog.InfoLevel, "Dialer状态监控结束")
 }
 
 // 监控Publisher状态
 func (r *RabbitMQ) monitorPublisherState(stateCh <-chan publisher.State) {
 	for state := range stateCh {
 		if state.Ready != nil {
-			r.logger.Printf("Publisher就绪")
+			Log(r.config.EnableLog, zerolog.InfoLevel, "Publisher就绪")
 		}
 		if state.Unready != nil {
-			r.logger.Printf("Publisher断开: %v", state.Unready.Err)
+			Log(r.config.EnableLog, zerolog.InfoLevel, "Publisher断开: %v", state.Unready.Err)
 		}
 	}
-	r.logger.Printf("Publisher状态监控结束")
+	Log(r.config.EnableLog, zerolog.InfoLevel, "Publisher状态监控结束")
 }
 
 // declareExchange declares an exchange
@@ -231,7 +227,7 @@ func (r *RabbitMQ) bindQueueToExchange(queueName, exchangeName, routingKey strin
 	}
 	defer ch.Close()
 
-	r.logger.Printf("Binding queue: %s to exchange: %s with topic: %s", queueName, exchangeName, routingKey)
+	Log(r.config.EnableLog, zerolog.InfoLevel, "Binding queue: %s to exchange: %s with topic: %s", queueName, exchangeName, routingKey)
 	return ch.QueueBind(
 		queueName,    // queue name
 		routingKey,   // routing key
@@ -260,7 +256,7 @@ func (r *RabbitMQ) setupConsumer(exchangeName string, consumerConfig *ConsumerCo
 	defer ch.Close()
 
 	// 声明队列
-	r.logger.Printf("Declaring queue: %s", consumerConfig.QueueOptions.Name)
+	Log(r.config.EnableLog, zerolog.InfoLevel, "Declaring queue: %s", consumerConfig.QueueOptions.Name)
 	_, err = ch.QueueDeclare(
 		consumerConfig.QueueOptions.Name,
 		consumerConfig.QueueOptions.Durable,
@@ -323,7 +319,7 @@ func (r *RabbitMQ) setupConsumer(exchangeName string, consumerConfig *ConsumerCo
 	go func() {
 		defer r.wg.Done()
 		<-c.NotifyClosed()
-		r.logger.Printf("Consumer for queue %s has been closed", consumerConfig.QueueOptions.Name)
+		Log(r.config.EnableLog, zerolog.InfoLevel, "Consumer for queue %s has been closed", consumerConfig.QueueOptions.Name)
 	}()
 
 	return nil
@@ -333,13 +329,13 @@ func (r *RabbitMQ) setupConsumer(exchangeName string, consumerConfig *ConsumerCo
 func (r *RabbitMQ) monitorConsumerState(stateCh <-chan consumer.State, queueName string) {
 	for state := range stateCh {
 		if state.Ready != nil {
-			r.logger.Printf("Consumer队列 %s 已就绪", queueName)
+			Log(r.config.EnableLog, zerolog.InfoLevel, "Consumer队列 %s 已就绪", queueName)
 		}
 		if state.Unready != nil {
-			r.logger.Printf("Consumer队列 %s 断开连接: %v", queueName, state.Unready.Err)
+			Log(r.config.EnableLog, zerolog.InfoLevel, "Consumer队列 %s 断开连接: %v", queueName, state.Unready.Err)
 		}
 	}
-	r.logger.Printf("Consumer状态监控结束: %s", queueName)
+	Log(r.config.EnableLog, zerolog.InfoLevel, "Consumer状态监控结束: %s", queueName)
 }
 
 // Publish publishes a message to the specified exchange with the given routing key
@@ -359,7 +355,7 @@ func (r *RabbitMQ) Publish(exchange, routingKey string, body []byte) error {
 
 // Close gracefully closes the RabbitMQ connection
 func (r *RabbitMQ) Close() {
-	r.logger.Println("Closing RabbitMQ connection...")
+	Log(r.config.EnableLog, zerolog.InfoLevel, "Closing RabbitMQ connection...")
 	r.cancelFunc()
 
 	// Close publisher
@@ -368,9 +364,9 @@ func (r *RabbitMQ) Close() {
 	}
 
 	// Close dialer after all consumers have stopped
-	r.logger.Println("Waiting for all consumers to stop...")
+	Log(r.config.EnableLog, zerolog.InfoLevel, "Waiting for all consumers to stop...")
 	r.wg.Wait()
-	r.logger.Println("All consumers stopped")
+	Log(r.config.EnableLog, zerolog.InfoLevel, "All consumers stopped")
 
 	if r.dialer != nil {
 		r.dialer.Close()

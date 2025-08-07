@@ -1,9 +1,6 @@
 package ezrmq
 
 import (
-	"context"
-	"log"
-
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -13,6 +10,8 @@ type Config struct {
 	CaCertBytes  []byte
 	ClientCert   []byte
 	ClientKey    []byte
+
+	EnableLog bool // 是否启用日志
 
 	Producers map[string]ProducerConfig   // 用于生产消息, key为exchange name, value为配置信息，包括: 类型
 	Consumers map[string][]ConsumerConfig // 用于消费信息, key为exchange name, value为配置信息，包括: 类型,topics,handler
@@ -63,18 +62,18 @@ type ConsumeOptions struct {
 
 type MessageHandlerFunc func(msg amqp.Delivery)
 
-func messageHandler(ctx context.Context, msgs <-chan amqp.Delivery, handler MessageHandlerFunc) {
-	for {
-		select {
-		case msg, ok := <-msgs:
-			if !ok {
-				log.Printf("Channel closed\n")
-				return
-			}
-			handler(msg)
-		case <-ctx.Done():
-			log.Printf("done,quit")
-			return
-		}
-	}
-}
+// func messageHandler(ctx context.Context, msgs <-chan amqp.Delivery, handler MessageHandlerFunc) {
+// 	for {
+// 		select {
+// 		case msg, ok := <-msgs:
+// 			if !ok {
+// 				log.Printf("Channel closed\n")
+// 				return
+// 			}
+// 			handler(msg)
+// 		case <-ctx.Done():
+// 			log.Printf("done,quit")
+// 			return
+// 		}
+// 	}
+// }

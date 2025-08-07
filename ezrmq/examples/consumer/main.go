@@ -39,7 +39,7 @@ AsBLPhYADl31nkFiJKO/r7Ewdwhwahl3lkCxnigBAeUnm0VICtmlNBdu
 
 	url := "amqp://guest:guest@10.1.9.128:5672/"
 	// 1. 构建实例
-	rabbitMQ, err := ezrmq.NewRabbitMQ(url, 5, caCertBytes, nil, nil)
+	rabbitMQ, err := ezrmq.NewRabbitMQ(url, 5, caCertBytes, nil, nil, true)
 	if err != nil {
 		log.Fatalf("Failed to connect to RabbitMQ: %s", err)
 	}
