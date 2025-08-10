@@ -58,15 +58,15 @@ func WithServiceName(name string) Option {
 	}
 }
 
-func WithCaller() Option {
+func WithCaller(v bool) Option {
 	return func(o *Options) {
-		o.withCaller = true
+		o.withCaller = v
 	}
 }
 
-func WithTimestamp() Option {
+func WithTimestamp(v bool) Option {
 	return func(o *Options) {
-		o.withTimestamp = true
+		o.withTimestamp = v
 	}
 }
 

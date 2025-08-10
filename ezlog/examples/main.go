@@ -8,8 +8,8 @@ import (
 
 func main() {
 	ezlog.SetLog(
-		ezlog.WithCaller(),
-		ezlog.WithTimestamp(),
+		ezlog.WithCaller(true),
+		ezlog.WithTimestamp(true),
 		ezlog.WithLevel(zerolog.TraceLevel),
 		ezlog.WithServiceName("aa"),
 		ezlog.WithWriter(ezlog.Split),
