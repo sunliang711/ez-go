@@ -71,6 +71,8 @@ type DatabaseConfig struct {
 	Tables []Table
 	Log    LogLevel
 
+	AutoMigrate bool
+
 	// ReadWriteSeparate 是否开启读写分离
 	ReadWriteSeparate bool
 	// Replicas 读写分离时的从库地址，多个地址用||分隔
@@ -215,12 +217,14 @@ func (db *Database) Init() error {
 		db.logger.Printf("open database %s success", config.Name)
 		db.dbs[config.Name] = conn
 
-		// migrate tables
-		for _, table := range config.Tables {
-			db.logger.Printf("migrate table: %s", table.Name)
-			err = conn.AutoMigrate(table.Definition)
-			if err != nil {
-				return fmt.Errorf("migrate table %s error: %v", table.Name, err)
+		if config.AutoMigrate {
+			// migrate tables
+			for _, table := range config.Tables {
+				db.logger.Printf("migrate table: %s", table.Name)
+				err = conn.AutoMigrate(table.Definition)
+				if err != nil {
+					return fmt.Errorf("migrate table %s error: %v", table.Name, err)
+				}
 			}
 		}
 	}
