@@ -1,13 +1,14 @@
 go 1.21.1
 
 use (
+	./ezcache
+	./ezcamunda
+	./ezcfg
 	./ezdb
 	./ezgrpc
 	./ezhttp
-	./ezrmq
-	./ezcfg
-	./ezcamunda
-	./ezlog
-	./ezcache
 	./ezlock
+	./ezlog
+	./ezrmq
+	./ezrocketmq
 )
