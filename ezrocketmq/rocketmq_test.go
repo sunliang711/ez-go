@@ -27,6 +27,23 @@ func TestNewRocketMQ(t *testing.T) {
 	}
 }
 
+func TestNewRocketMQWithCredentials(t *testing.T) {
+	nameServers := []string{"127.0.0.1:9876"}
+	credentials := &primitive.Credentials{
+		AccessKey:     "test-access-key",
+		SecretKey:     "test-secret-key",
+		SecurityToken: "test-token",
+	}
+	rocketMQ, err := NewRocketMQ(nameServers, "test-instance", "", false, credentials)
+	if err != nil {
+		t.Fatalf("Failed to create RocketMQ instance: %v", err)
+	}
+
+	if rocketMQ.config.Credentials.AccessKey != "test-access-key" {
+		t.Errorf("Expected access key 'test-access-key', got '%s'", rocketMQ.config.Credentials.AccessKey)
+	}
+}
+
 func TestNewRocketMQWithEmptyNameServers(t *testing.T) {
 	nameServers := []string{}
 	_, err := NewRocketMQ(nameServers, "test-instance", "", false)
@@ -79,7 +96,7 @@ func TestAddProducer(t *testing.T) {
 
 	topic := "test-topic"
 	groupName := "test-producer-group"
-	config := ProducerConfig{
+	config := &ProducerConfig{
 		MaxMessageSize: 1024,
 		SendMsgTimeout: 5000,
 		RetryTimes:     5,
@@ -118,9 +135,8 @@ func TestAddProducerWithDefaults(t *testing.T) {
 
 	topic := "test-topic"
 	groupName := "test-producer-group"
-	config := ProducerConfig{} // Empty config to test defaults
 
-	err = rocketMQ.AddProducer(topic, groupName, config)
+	err = rocketMQ.AddProducer(topic, groupName, nil) // No config to test defaults
 	if err != nil {
 		t.Fatalf("Failed to add producer: %v", err)
 	}
@@ -152,7 +168,7 @@ func TestAddConsumer(t *testing.T) {
 	handler := func(ctx context.Context, msgs []*primitive.MessageExt) (ConsumeResult, error) {
 		return ConsumeSuccess, nil
 	}
-	config := ConsumerConfig{
+	config := &ConsumerConfig{
 		Tags:                []string{"tag1"},
 		ConsumeFromWhere:    ConsumeFromLastOffset,
 		ConsumeMode:         Clustering,
@@ -204,9 +220,8 @@ func TestAddConsumerWithDefaults(t *testing.T) {
 	handler := func(ctx context.Context, msgs []*primitive.MessageExt) (ConsumeResult, error) {
 		return ConsumeSuccess, nil
 	}
-	config := ConsumerConfig{} // Empty config to test defaults
 
-	err = rocketMQ.AddConsumer(topic, groupName, handler, config)
+	err = rocketMQ.AddConsumer(topic, groupName, handler, nil) // No config to test defaults
 	if err != nil {
 		t.Fatalf("Failed to add consumer: %v", err)
 	}
@@ -243,9 +258,8 @@ func TestAddConsumerWithNilHandler(t *testing.T) {
 
 	topic := "test-topic"
 	groupName := "test-consumer-group"
-	config := ConsumerConfig{}
 
-	err = rocketMQ.AddConsumer(topic, groupName, nil, config)
+	err = rocketMQ.AddConsumer(topic, groupName, nil, nil)
 	if err == nil {
 		t.Fatal("Expected error for nil handler, got nil")
 	}
@@ -339,8 +353,7 @@ func TestGetProducerState(t *testing.T) {
 	}
 
 	// After adding producer, should be created
-	config := ProducerConfig{}
-	err = rocketMQ.AddProducer(topic, "test-group", config)
+	err = rocketMQ.AddProducer(topic, "test-group", nil)
 	if err != nil {
 		t.Fatalf("Failed to add producer: %v", err)
 	}
@@ -383,5 +396,125 @@ func TestRocketMQError(t *testing.T) {
 	expected := "outer error: test error"
 	if innerErr.Error() != expected {
 		t.Errorf("Expected '%s', got '%s'", expected, innerErr.Error())
+	}
+}
+
+func TestSetDefaultProducerConfig(t *testing.T) {
+	// Save original default
+	originalDefault := GetDefaultProducerConfig()
+	defer SetDefaultProducerConfig(originalDefault)
+
+	customConfig := ProducerConfig{
+		MaxMessageSize: 8 * 1024 * 1024, // 8MB
+		SendMsgTimeout: 5000,            // 5秒
+		RetryTimes:     5,
+		Tags:           []string{"custom", "tag"},
+		Properties:     map[string]string{"key": "value"},
+	}
+
+	SetDefaultProducerConfig(customConfig)
+	defaultConfig := GetDefaultProducerConfig()
+
+	if defaultConfig.MaxMessageSize != 8*1024*1024 {
+		t.Errorf("Expected MaxMessageSize 8MB, got %d", defaultConfig.MaxMessageSize)
+	}
+
+	if defaultConfig.SendMsgTimeout != 5000 {
+		t.Errorf("Expected SendMsgTimeout 5000, got %d", defaultConfig.SendMsgTimeout)
+	}
+
+	if defaultConfig.RetryTimes != 5 {
+		t.Errorf("Expected RetryTimes 5, got %d", defaultConfig.RetryTimes)
+	}
+
+	if len(defaultConfig.Tags) != 2 {
+		t.Errorf("Expected 2 tags, got %d", len(defaultConfig.Tags))
+	}
+
+	if defaultConfig.Properties["key"] != "value" {
+		t.Errorf("Expected property 'key'='value', got '%s'", defaultConfig.Properties["key"])
+	}
+}
+
+func TestSetDefaultConsumerConfig(t *testing.T) {
+	// Save original default
+	originalDefault := GetDefaultConsumerConfig()
+	defer SetDefaultConsumerConfig(originalDefault)
+
+	customConfig := ConsumerConfig{
+		ConsumeFromWhere:    ConsumeFromFirstOffset,
+		ConsumeMode:         Broadcasting,
+		MaxReconsumeTimes:   20,
+		ConsumeTimeout:      30,
+		PullInterval:        2000,
+		PullBatchSize:       64,
+		MaxCachedMessageNum: 2000,
+		Tags:                []string{"custom", "consumer", "tag"},
+		Properties:          map[string]string{"consumer": "test"},
+	}
+
+	SetDefaultConsumerConfig(customConfig)
+	defaultConfig := GetDefaultConsumerConfig()
+
+	if defaultConfig.ConsumeFromWhere != ConsumeFromFirstOffset {
+		t.Errorf("Expected ConsumeFromFirstOffset, got %v", defaultConfig.ConsumeFromWhere)
+	}
+
+	if defaultConfig.ConsumeMode != Broadcasting {
+		t.Errorf("Expected Broadcasting, got %v", defaultConfig.ConsumeMode)
+	}
+
+	if defaultConfig.MaxReconsumeTimes != 20 {
+		t.Errorf("Expected MaxReconsumeTimes 20, got %d", defaultConfig.MaxReconsumeTimes)
+	}
+
+	if len(defaultConfig.Tags) != 3 {
+		t.Errorf("Expected 3 tags, got %d", len(defaultConfig.Tags))
+	}
+
+	if defaultConfig.Properties["consumer"] != "test" {
+		t.Errorf("Expected property 'consumer'='test', got '%s'", defaultConfig.Properties["consumer"])
+	}
+}
+
+func TestAddProducerWithCustomDefaults(t *testing.T) {
+	// Save original default
+	originalDefault := GetDefaultProducerConfig()
+	defer SetDefaultProducerConfig(originalDefault)
+
+	// Set custom defaults
+	customDefault := ProducerConfig{
+		MaxMessageSize: 8 * 1024 * 1024,
+		SendMsgTimeout: 5000,
+		RetryTimes:     5,
+	}
+	SetDefaultProducerConfig(customDefault)
+
+	nameServers := []string{"127.0.0.1:9876"}
+	rocketMQ, err := NewRocketMQ(nameServers, "test-instance", "", false)
+	if err != nil {
+		t.Fatalf("Failed to create RocketMQ instance: %v", err)
+	}
+
+	topic := "test-topic"
+	groupName := "test-producer-group"
+
+	err = rocketMQ.AddProducer(topic, groupName, nil)
+	if err != nil {
+		t.Fatalf("Failed to add producer: %v", err)
+	}
+
+	producerConfig := rocketMQ.config.Producers[topic]
+
+	if producerConfig.MaxMessageSize != 8*1024*1024 {
+		t.Errorf("Expected custom default max message size %d, got %d", 8*1024*1024, producerConfig.MaxMessageSize)
+	}
+
+	if producerConfig.SendMsgTimeout != 5000 {
+		t.Errorf("Expected custom default send timeout 5000, got %d", producerConfig.SendMsgTimeout)
+	}
+
+	if producerConfig.RetryTimes != 5 {
+		t.Errorf("Expected custom default retry times 5, got %d", producerConfig.RetryTimes)
 	}
 }

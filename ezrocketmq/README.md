@@ -12,6 +12,9 @@ EzRocketMQ 是一个基于 Apache RocketMQ Go 客户端的简化封装库，提�
 - 内置日志功能
 - 优雅的启动和关闭
 - 支持认证机制
+- 支持创建时传递认证信息
+- 支持默认配置，简化生产者和消费者配置
+- 可自定义默认配置值
 
 ## 安装
 
@@ -24,34 +27,52 @@ go get github.com/sunliang711/ez-go/ezrocketmq
 ### 创建 RocketMQ 实例
 
 ```go
-import "github.com/sunliang711/ez-go/ezrocketmq"
+import (
+    "github.com/sunliang711/ez-go/ezrocketmq"
+    "github.com/apache/rocketmq-client-go/v2/primitive"
+)
 
 // RocketMQ NameServer 地址列表
 nameServers := []string{"127.0.0.1:9876"}
 
-// 创建 RocketMQ 实例
+// 方式1: 创建无认证的 RocketMQ 实例
 rocketMQ, err := ezrocketmq.NewRocketMQ(nameServers, "my-instance", "", true)
 if err != nil {
     log.Fatal(err)
 }
 
-// 如果需要认证
-// rocketMQ.SetCredentials("accessKey", "secretKey", "")
+// 方式2: 创建时直接传递认证信息
+credentials := &primitive.Credentials{
+    AccessKey:     "your-access-key",
+    SecretKey:     "your-secret-key",
+    SecurityToken: "your-security-token", // 可选
+}
+rocketMQ, err := ezrocketmq.NewRocketMQ(nameServers, "my-instance", "", true, credentials)
+if err != nil {
+    log.Fatal(err)
+}
+
+// 方式3: 创建后设置认证信息
+rocketMQ.SetCredentials("accessKey", "secretKey", "")
 ```
 
 ### 生产者示例
 
 ```go
-// 配置生产者
-producerConfig := ezrocketmq.ProducerConfig{
+// 方式1: 使用默认配置添加生产者（推荐）
+err = rocketMQ.AddProducer("test-topic", "producer-group", nil)
+if err != nil {
+    log.Fatal(err)
+}
+
+// 方式2: 使用自定义配置添加生产者
+producerConfig := &ezrocketmq.ProducerConfig{
     MaxMessageSize: 4 * 1024 * 1024, // 4MB
     SendMsgTimeout: 3000,            // 3秒
     RetryTimes:     3,               // 重试3次
     Tags:           []string{"tag1", "tag2"},
 }
-
-// 添加生产者
-err = rocketMQ.AddProducer("test-topic", "producer-group", producerConfig)
+err = rocketMQ.AddProducer("custom-topic", "custom-producer-group", producerConfig)
 if err != nil {
     log.Fatal(err)
 }
@@ -97,8 +118,14 @@ messageHandler := func(ctx context.Context, msgs []*primitive.MessageExt) (ezroc
     return ezrocketmq.ConsumeSuccess, nil
 }
 
-// 配置消费者
-consumerConfig := ezrocketmq.ConsumerConfig{
+// 方式1: 使用默认配置添加消费者（推荐）
+err = rocketMQ.AddConsumer("test-topic", "consumer-group", messageHandler, nil)
+if err != nil {
+    log.Fatal(err)
+}
+
+// 方式2: 使用自定义配置添加消费者
+consumerConfig := &ezrocketmq.ConsumerConfig{
     Tags:                []string{"tag1"}, // 订阅的标签，空数组表示订阅所有
     ConsumeFromWhere:    ezrocketmq.ConsumeFromLastOffset,
     ConsumeMode:         ezrocketmq.Clustering,
@@ -108,9 +135,7 @@ consumerConfig := ezrocketmq.ConsumerConfig{
     PullBatchSize:       32,
     MaxCachedMessageNum: 1000,
 }
-
-// 添加消费者
-err = rocketMQ.AddConsumer("test-topic", "consumer-group", messageHandler, consumerConfig)
+err = rocketMQ.AddConsumer("custom-topic", "custom-consumer-group", messageHandler, consumerConfig)
 if err != nil {
     log.Fatal(err)
 }
@@ -124,6 +149,53 @@ if err != nil {
 // 程序退出时停止
 defer rocketMQ.Stop()
 ```
+
+## 默认配置管理
+
+### 设置默认生产者配置
+
+```go
+// 设置自定义的默认生产者配置
+customProducerDefaults := ezrocketmq.ProducerConfig{
+    MaxMessageSize: 8 * 1024 * 1024, // 8MB
+    SendMsgTimeout: 5000,            // 5秒
+    RetryTimes:     5,
+    Tags:           []string{"default", "producer"},
+    Properties:     map[string]string{"env": "production"},
+}
+ezrocketmq.SetDefaultProducerConfig(customProducerDefaults)
+
+// 获取当前的默认生产者配置
+currentDefaults := ezrocketmq.GetDefaultProducerConfig()
+```
+
+### 设置默认消费者配置
+
+```go
+// 设置自定义的默认消费者配置
+customConsumerDefaults := ezrocketmq.ConsumerConfig{
+    ConsumeFromWhere:    ezrocketmq.ConsumeFromLastOffset,
+    ConsumeMode:         ezrocketmq.Clustering,
+    MaxReconsumeTimes:   20,
+    ConsumeTimeout:      30, // 30分钟
+    PullInterval:        2000,
+    PullBatchSize:       64,
+    MaxCachedMessageNum: 2000,
+    Tags:                []string{"default", "consumer"},
+    Properties:          map[string]string{"env": "production"},
+}
+ezrocketmq.SetDefaultConsumerConfig(customConsumerDefaults)
+
+// 获取当前的默认消费者配置
+currentDefaults := ezrocketmq.GetDefaultConsumerConfig()
+```
+
+### 使用默认配置的优势
+
+1. **简化代码**：只需传递必要参数（topic、groupName、handler）
+2. **统一配置**：所有生产者/消费者使用相同的默认配置
+3. **易于维护**：修改默认配置即可影响所有使用默认配置的实例
+4. **渐进式配置**：可以只覆盖需要修改的配置项
 
 ## 消息发送方式
 
@@ -273,6 +345,8 @@ if rocketMQ.IsStarted() {
 | PullInterval | int64 | 1000 | 拉取间隔(毫秒) |
 | PullBatchSize | int32 | 32 | 批量拉取大小 |
 | MaxCachedMessageNum | int32 | 1000 | 最大缓存消息数量 |
+| Properties | map[string]string | nil | 自定义属性 |
+| Interceptors | []primitive.Interceptor | nil | 拦截器 |
 
 ### SendOptions
 
@@ -309,18 +383,22 @@ if rocketMQ.IsStarted() {
 
 ## 最佳实践
 
-1. **合理设置消费者数量**：根据消息量和处理能力配置适当的消费者数量
-2. **错误处理**：实现完善的错误处理和重试机制
-3. **消息幂等**：确保消息处理的幂等性
-4. **批量处理**：合理设置批量大小以提高性能
-5. **监控**：监控消息积压、消费延迟等指标
-6. **优雅关闭**：确保程序退出时调用 `Stop()` 方法
+1. **使用默认配置**：优先使用默认配置，减少代码复杂度
+2. **设置全局默认配置**：在应用启动时设置适合的默认配置
+3. **合理设置消费者数量**：根据消息量和处理能力配置适当的消费者数量
+4. **错误处理**：实现完善的错误处理和重试机制
+5. **消息幂等**：确保消息处理的幂等性
+6. **批量处理**：合理设置批量大小以提高性能
+7. **监控**：监控消息积压、消费延迟等指标
+8. **优雅关闭**：确保程序退出时调用 `Stop()` 方法
+9. **认证安全**：在生产环境中使用认证机制，保护消息安全
 
 ## 示例代码
 
 完整的示例代码请参考：
 - [生产者示例](examples/producer/main.go)
 - [消费者示例](examples/consumer/main.go)
+- [新功能示例](examples/new_features_example.go)
 
 ## 依赖
 

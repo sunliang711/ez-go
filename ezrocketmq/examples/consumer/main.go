@@ -26,7 +26,7 @@ func main() {
 	// rocketMQ.SetCredentials("accessKey", "secretKey", "")
 
 	// 定义Topic和消费者组
-	topic := "test-topic"
+	topic := "TopicTokenWithdraw"
 	groupName := "test-consumer-group"
 
 	// 定义消息处理函数
@@ -75,7 +75,7 @@ func main() {
 	}
 
 	// 添加消费者
-	err = rocketMQ.AddConsumer(topic, groupName, messageHandler, consumerConfig)
+	err = rocketMQ.AddConsumer(topic, groupName, messageHandler, &consumerConfig)
 	if err != nil {
 		log.Fatalf("Failed to add consumer: %v", err)
 	}
@@ -104,7 +104,7 @@ func main() {
 	}
 
 	// 使用不同的消费者组来避免冲突
-	err = rocketMQ.AddConsumer(topic, "delay-consumer-group", specificTagHandler, specificTagConfig)
+	err = rocketMQ.AddConsumer(topic, "delay-consumer-group", specificTagHandler, &specificTagConfig)
 	if err != nil {
 		log.Fatalf("Failed to add specific tag consumer: %v", err)
 	}
@@ -139,7 +139,7 @@ func main() {
 		return ezrocketmq.ConsumeSuccess, nil
 	}
 
-	err = rocketMQ.AddConsumer(topic, "error-consumer-group", errorHandler, errorHandlerConfig)
+	err = rocketMQ.AddConsumer(topic, "error-consumer-group", errorHandler, &errorHandlerConfig)
 	if err != nil {
 		log.Fatalf("Failed to add error handler consumer: %v", err)
 	}

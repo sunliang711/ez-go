@@ -10,7 +10,30 @@ import (
 	"github.com/apache/rocketmq-client-go/v2/consumer"
 	"github.com/apache/rocketmq-client-go/v2/primitive"
 	"github.com/apache/rocketmq-client-go/v2/producer"
+	"github.com/apache/rocketmq-client-go/v2/rlog"
 	"github.com/rs/zerolog"
+)
+
+var (
+	// 默认生产者配置
+	defaultProducerConfig = ProducerConfig{
+		MaxMessageSize: 4 * 1024 * 1024, // 4MB
+		SendMsgTimeout: 3000,            // 3秒
+		RetryTimes:     3,
+	}
+
+	// 默认消费者配置
+	defaultConsumerConfig = ConsumerConfig{
+		ConsumeFromWhere:    ConsumeFromLastOffset,
+		ConsumeMode:         Clustering,
+		MaxReconsumeTimes:   16,
+		ConsumeTimeout:      15,   // 15分钟
+		PullInterval:        1000, // 1秒
+		PullBatchSize:       32,
+		MaxCachedMessageNum: 1000,
+	}
+
+	configMutex sync.RWMutex
 )
 
 type RocketMQ struct {
@@ -25,23 +48,32 @@ type RocketMQ struct {
 }
 
 // NewRocketMQ 创建新的RocketMQ实例
-func NewRocketMQ(nameServers []string, instanceName, namespace string, enableLog bool) (*RocketMQ, error) {
+func NewRocketMQ(nameServers []string, instanceName, namespace string, enableLog bool, credentials ...*primitive.Credentials) (*RocketMQ, error) {
 	if err := ValidateNameServers(nameServers); err != nil {
 		return nil, err
 	}
 
+	rlog.SetLogLevel("error")
+
 	ctx, cancel := context.WithCancel(context.Background())
 
+	config := Config{
+		NameServers:  nameServers,
+		InstanceName: instanceName,
+		Namespace:    namespace,
+		RetryTimes:   3,
+		EnableLog:    enableLog,
+		Producers:    make(map[string]ProducerConfig),
+		Consumers:    make(map[string][]ConsumerConfig),
+	}
+
+	// 如果提供了credentials，则设置
+	if len(credentials) > 0 && credentials[0] != nil {
+		config.Credentials = *credentials[0]
+	}
+
 	r := &RocketMQ{
-		config: Config{
-			NameServers:  nameServers,
-			InstanceName: instanceName,
-			Namespace:    namespace,
-			RetryTimes:   3,
-			EnableLog:    enableLog,
-			Producers:    make(map[string]ProducerConfig),
-			Consumers:    make(map[string][]ConsumerConfig),
-		},
+		config:    config,
 		producers: make(map[string]rocketmq.Producer),
 		consumers: make(map[string]rocketmq.PushConsumer),
 		ctx:       ctx,
@@ -49,6 +81,107 @@ func NewRocketMQ(nameServers []string, instanceName, namespace string, enableLog
 	}
 
 	return r, nil
+}
+
+// SetDefaultProducerConfig 设置默认的生产者配置
+func SetDefaultProducerConfig(config ProducerConfig) {
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	// 设置默认值，但不覆盖Topic和GroupName
+	if config.MaxMessageSize > 0 {
+		defaultProducerConfig.MaxMessageSize = config.MaxMessageSize
+	}
+	if config.SendMsgTimeout > 0 {
+		defaultProducerConfig.SendMsgTimeout = config.SendMsgTimeout
+	}
+	if config.RetryTimes > 0 {
+		defaultProducerConfig.RetryTimes = config.RetryTimes
+	}
+	if len(config.Tags) > 0 {
+		defaultProducerConfig.Tags = config.Tags
+	}
+	if len(config.Properties) > 0 {
+		defaultProducerConfig.Properties = config.Properties
+	}
+}
+
+// SetDefaultConsumerConfig 设置默认的消费者配置
+func SetDefaultConsumerConfig(config ConsumerConfig) {
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	// 设置默认值，但不覆盖Topic、GroupName和Handler
+	defaultConsumerConfig.ConsumeFromWhere = config.ConsumeFromWhere
+	defaultConsumerConfig.ConsumeMode = config.ConsumeMode
+	if config.MaxReconsumeTimes > 0 {
+		defaultConsumerConfig.MaxReconsumeTimes = config.MaxReconsumeTimes
+	}
+	if config.ConsumeTimeout > 0 {
+		defaultConsumerConfig.ConsumeTimeout = config.ConsumeTimeout
+	}
+	if config.PullInterval > 0 {
+		defaultConsumerConfig.PullInterval = config.PullInterval
+	}
+	if config.PullBatchSize > 0 {
+		defaultConsumerConfig.PullBatchSize = config.PullBatchSize
+	}
+	if config.MaxCachedMessageNum > 0 {
+		defaultConsumerConfig.MaxCachedMessageNum = config.MaxCachedMessageNum
+	}
+	if len(config.Tags) > 0 {
+		defaultConsumerConfig.Tags = config.Tags
+	}
+	if len(config.Properties) > 0 {
+		defaultConsumerConfig.Properties = config.Properties
+	}
+	if len(config.Interceptors) > 0 {
+		defaultConsumerConfig.Interceptors = config.Interceptors
+	}
+}
+
+// GetDefaultProducerConfig 获取默认的生产者配置副本
+func GetDefaultProducerConfig() ProducerConfig {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+
+	// 返回副本以避免并发修改
+	config := defaultProducerConfig
+	if len(defaultProducerConfig.Tags) > 0 {
+		config.Tags = make([]string, len(defaultProducerConfig.Tags))
+		copy(config.Tags, defaultProducerConfig.Tags)
+	}
+	if len(defaultProducerConfig.Properties) > 0 {
+		config.Properties = make(map[string]string)
+		for k, v := range defaultProducerConfig.Properties {
+			config.Properties[k] = v
+		}
+	}
+	return config
+}
+
+// GetDefaultConsumerConfig 获取默认的消费者配置副本
+func GetDefaultConsumerConfig() ConsumerConfig {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+
+	// 返回副本以避免并发修改
+	config := defaultConsumerConfig
+	if len(defaultConsumerConfig.Tags) > 0 {
+		config.Tags = make([]string, len(defaultConsumerConfig.Tags))
+		copy(config.Tags, defaultConsumerConfig.Tags)
+	}
+	if len(defaultConsumerConfig.Properties) > 0 {
+		config.Properties = make(map[string]string)
+		for k, v := range defaultConsumerConfig.Properties {
+			config.Properties[k] = v
+		}
+	}
+	if len(defaultConsumerConfig.Interceptors) > 0 {
+		config.Interceptors = make([]primitive.Interceptor, len(defaultConsumerConfig.Interceptors))
+		copy(config.Interceptors, defaultConsumerConfig.Interceptors)
+	}
+	return config
 }
 
 // SetCredentials 设置认证信息
@@ -61,7 +194,7 @@ func (r *RocketMQ) SetCredentials(accessKey, secretKey, securityToken string) {
 }
 
 // AddProducer 添加生产者配置
-func (r *RocketMQ) AddProducer(topic, groupName string, config ProducerConfig) error {
+func (r *RocketMQ) AddProducer(topic, groupName string, config *ProducerConfig) error {
 	if err := ValidateTopicName(topic); err != nil {
 		return err
 	}
@@ -72,26 +205,43 @@ func (r *RocketMQ) AddProducer(topic, groupName string, config ProducerConfig) e
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	config.Topic = topic
-	config.GroupName = groupName
+	// 如果没有提供config，使用默认配置
+	var finalConfig ProducerConfig
+	if config == nil {
+		finalConfig = GetDefaultProducerConfig()
+	} else {
+		finalConfig = *config
+		// 使用默认值填充未设置的字段
+		if finalConfig.MaxMessageSize <= 0 {
+			finalConfig.MaxMessageSize = defaultProducerConfig.MaxMessageSize
+		}
+		if finalConfig.SendMsgTimeout <= 0 {
+			finalConfig.SendMsgTimeout = defaultProducerConfig.SendMsgTimeout
+		}
+		if finalConfig.RetryTimes <= 0 {
+			finalConfig.RetryTimes = defaultProducerConfig.RetryTimes
+		}
+		if len(finalConfig.Tags) == 0 && len(defaultProducerConfig.Tags) > 0 {
+			finalConfig.Tags = make([]string, len(defaultProducerConfig.Tags))
+			copy(finalConfig.Tags, defaultProducerConfig.Tags)
+		}
+		if len(finalConfig.Properties) == 0 && len(defaultProducerConfig.Properties) > 0 {
+			finalConfig.Properties = make(map[string]string)
+			for k, v := range defaultProducerConfig.Properties {
+				finalConfig.Properties[k] = v
+			}
+		}
+	}
 
-	// 设置默认值
-	if config.MaxMessageSize <= 0 {
-		config.MaxMessageSize = 4 * 1024 * 1024 // 4MB
-	}
-	if config.SendMsgTimeout <= 0 {
-		config.SendMsgTimeout = 3000 // 3秒
-	}
-	if config.RetryTimes <= 0 {
-		config.RetryTimes = 3
-	}
+	finalConfig.Topic = topic
+	finalConfig.GroupName = groupName
 
-	r.config.Producers[topic] = config
+	r.config.Producers[topic] = finalConfig
 	return nil
 }
 
 // AddConsumer 添加消费者配置
-func (r *RocketMQ) AddConsumer(topic, groupName string, handler MessageHandlerFunc, config ConsumerConfig) error {
+func (r *RocketMQ) AddConsumer(topic, groupName string, handler MessageHandlerFunc, config *ConsumerConfig) error {
 	if err := ValidateTopicName(topic); err != nil {
 		return err
 	}
@@ -108,28 +258,49 @@ func (r *RocketMQ) AddConsumer(topic, groupName string, handler MessageHandlerFu
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	config.Topic = topic
-	config.GroupName = groupName
-	config.Handler = handler
+	// 如果没有提供config，使用默认配置
+	var finalConfig ConsumerConfig
+	if config == nil {
+		finalConfig = GetDefaultConsumerConfig()
+	} else {
+		finalConfig = *config
+		// 使用默认值填充未设置的字段
+		if finalConfig.MaxReconsumeTimes <= 0 {
+			finalConfig.MaxReconsumeTimes = defaultConsumerConfig.MaxReconsumeTimes
+		}
+		if finalConfig.ConsumeTimeout <= 0 {
+			finalConfig.ConsumeTimeout = defaultConsumerConfig.ConsumeTimeout
+		}
+		if finalConfig.PullInterval <= 0 {
+			finalConfig.PullInterval = defaultConsumerConfig.PullInterval
+		}
+		if finalConfig.PullBatchSize <= 0 {
+			finalConfig.PullBatchSize = defaultConsumerConfig.PullBatchSize
+		}
+		if finalConfig.MaxCachedMessageNum <= 0 {
+			finalConfig.MaxCachedMessageNum = defaultConsumerConfig.MaxCachedMessageNum
+		}
+		if len(finalConfig.Tags) == 0 && len(defaultConsumerConfig.Tags) > 0 {
+			finalConfig.Tags = make([]string, len(defaultConsumerConfig.Tags))
+			copy(finalConfig.Tags, defaultConsumerConfig.Tags)
+		}
+		if len(finalConfig.Properties) == 0 && len(defaultConsumerConfig.Properties) > 0 {
+			finalConfig.Properties = make(map[string]string)
+			for k, v := range defaultConsumerConfig.Properties {
+				finalConfig.Properties[k] = v
+			}
+		}
+		if len(finalConfig.Interceptors) == 0 && len(defaultConsumerConfig.Interceptors) > 0 {
+			finalConfig.Interceptors = make([]primitive.Interceptor, len(defaultConsumerConfig.Interceptors))
+			copy(finalConfig.Interceptors, defaultConsumerConfig.Interceptors)
+		}
+	}
 
-	// 设置默认值
-	if config.MaxReconsumeTimes <= 0 {
-		config.MaxReconsumeTimes = 16
-	}
-	if config.ConsumeTimeout <= 0 {
-		config.ConsumeTimeout = 15 // 15分钟
-	}
-	if config.PullInterval <= 0 {
-		config.PullInterval = 1000 // 1秒
-	}
-	if config.PullBatchSize <= 0 {
-		config.PullBatchSize = 32
-	}
-	if config.MaxCachedMessageNum <= 0 {
-		config.MaxCachedMessageNum = 1000
-	}
+	finalConfig.Topic = topic
+	finalConfig.GroupName = groupName
+	finalConfig.Handler = handler
 
-	r.config.Consumers[topic] = append(r.config.Consumers[topic], config)
+	r.config.Consumers[topic] = append(r.config.Consumers[topic], finalConfig)
 	return nil
 }
 

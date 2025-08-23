@@ -22,7 +22,7 @@ func main() {
 	// rocketMQ.SetCredentials("accessKey", "secretKey", "")
 
 	// 定义Topic和生产者组
-	topic := "test-topic"
+	topic := "TopicTokenWithdraw"
 	groupName := "test-producer-group"
 
 	// 配置生产者
@@ -37,7 +37,7 @@ func main() {
 	}
 
 	// 添加生产者
-	err = rocketMQ.AddProducer(topic, groupName, producerConfig)
+	err = rocketMQ.AddProducer(topic, groupName, &producerConfig)
 	if err != nil {
 		log.Fatalf("Failed to add producer: %v", err)
 	}
