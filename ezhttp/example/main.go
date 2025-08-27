@@ -17,7 +17,7 @@ import (
 var secret = "a-string-secret-at-least-256-bits-long"
 
 func main() {
-	ezlog.SetLog(ezlog.WithTimestamp(), ezlog.WithWriter(ezlog.Stdout), ezlog.WithLevel(zerolog.TraceLevel), ezlog.WithServiceName("ezhttp_example"))
+	ezlog.SetLog(ezlog.WithTimestamp(true), ezlog.WithWriter(ezlog.Stdout), ezlog.WithLevel(zerolog.TraceLevel), ezlog.WithServiceName("ezhttp_example"))
 
 	httpServer := server.NewHttpServer(server.WithPort(9001), server.EnableLog(true))
 	httpServer.AddHealthHandler()
